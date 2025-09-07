@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "NODE_OPTIONS=--dns-result-order=ipv4first next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
     "postinstall": "prisma generate"
@@ -17,16 +17,17 @@
     "@mui/icons-material": "^7.3.2",
     "@mui/material": "^7.3.2",
     "@prisma/client": "^6.15.0",
+    "@prisma/extension-accelerate": "^2.0.2",
+    "@types/node": "^20.19.13",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
     "jspdf": "^3.0.2",
     "jspdf-autotable": "^5.0.2",
     "next": "15.5.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "xlsx": "^0.18.5",
-    "@types/node": "^20.19.13",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

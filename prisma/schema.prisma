@@ -1,14 +1,14 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // plain postgresql://...
+}
+
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
 model User {
-  id       Int       @id @default(autoincrement())
+  id       Int     @id @default(autoincrement())
   first    String
   last     String
   address  String
@@ -17,17 +17,20 @@ model User {
   dislikes String?
   county   String?
   zip      String?
-  state    String
-  phone    String
-  medicaid Boolean   @default(false)
-  paused   Boolean   @default(false)
-  complex  Boolean   @default(false)
+  state    String?
+  phone    String?
+  medicaid Boolean @default(false)
+  paused   Boolean @default(false)
+  complex  Boolean @default(false)
+
   schedule Schedule?
+
+  @@map("User") // table is public."User"
 }
 
 model Schedule {
   id        Int     @id @default(autoincrement())
-  userId    Int     @unique
+  userId    Int     @unique @map("userId")
   monday    Boolean @default(true)
   tuesday   Boolean @default(true)
   wednesday Boolean @default(true)
@@ -35,13 +38,17 @@ model Schedule {
   friday    Boolean @default(true)
   saturday  Boolean @default(true)
   sunday    Boolean @default(true)
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("Schedule") // Use your actual table name here if different
 }
 
-// prisma/schema.prisma
 model CityColor {
   id         Int      @id @default(autoincrement())
   city       String   @unique
   color      String
-  updated_at DateTime @updatedAt
+  updated_at DateTime @default(now())
+
+  @@map("CityColor") // Use your actual table name; this creates mapping only
 }
