@@ -1,20 +1,25 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    // Remove images.domains; use remotePatterns instead
+    // Required for Next.js 13+ (Vercel recommends standalone for production)
+    output: "standalone",
+
+    // Remote images (instead of deprecated images.domains)
     images: {
         remotePatterns: [
-            { protocol: 'https', hostname: 'thedietfantasy.com' },
-            // add more hosts here if needed
+            {
+                protocol: "https",
+                hostname: "thedietfantasy.com",
+                pathname: "/**", // allow all paths under this host
+            },
+            // Add more hosts if needed
         ],
     },
 
-    // (Optional) Disable telemetry in prod builds
-    // telemetry: false,
+    // Disable telemetry in builds (optional)
+    telemetry: false,
 
-    // (Optional) for consistency with Turbopack
-    experimental: {
-        // turbopack is already enabled by your build command
-    },
+    // Experimental options (Turbopack is already enabled by build command)
+    experimental: {},
 };
 
 export default nextConfig;

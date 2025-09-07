@@ -268,121 +268,265 @@ export default function UsersPage() {
         XLSX.writeFile(workbook, `master ${tsString()}.xlsx`);
     }
 
+    // --- Helpers for PDF labels ---
+    function wrapAndDraw(doc, text, x, y, maxWidth, lineH) {
+        const lines = doc.splitTextToSize(String(text ?? ""), maxWidth);
+        for (const line of lines) {
+            doc.text(line, x, y);
+            y += lineH;
+        }
+        return y;
+    }
+
+    // Highlight-aware wrapped drawing for one logical line (handles "out of")
+    function drawWrappedWithHighlight(doc, text, x, y, maxWidth, lineH, baseRGB, phraseRegex = /out of/i, highlightRGB = [255, 20, 147]) {
+        // Tokenize into words, but merge "out of" into a single token when encountered
+        const rawWords = String(text ?? "").trim().split(/\s+/);
+        const tokens = [];
+        for (let i = 0; i < rawWords.length; i++) {
+            const w = rawWords[i];
+            const next = rawWords[i + 1];
+            if (w?.toLowerCase() === "out" && next?.toLowerCase() === "of") {
+                tokens.push("out of");
+                i++; // skip "of"
+            } else if (w) {
+                tokens.push(w);
+            }
+        }
+
+        const lineStartX = x;
+        let cursorX = x;
+        let cursorY = y;
+        const rightX = x + maxWidth;
+
+        const setBase = () => {
+            const [r, g, b] = baseRGB;
+            doc.setTextColor(r, g, b);
+            doc.setFont("helvetica", "normal");
+        };
+
+        const setHighlight = () => {
+            const [r, g, b] = highlightRGB;
+            doc.setTextColor(r, g, b);
+            doc.setFont("helvetica", "bold");
+        };
+
+        setBase();
+
+        let atLineStart = true;
+        for (const token of tokens) {
+            const isHighlight = phraseRegex.test(token);
+            const piece = atLineStart ? token : " " + token;
+            const w = doc.getTextWidth(piece);
+
+            if (cursorX + w > rightX) {
+                // wrap
+                cursorX = lineStartX;
+                cursorY += lineH;
+                atLineStart = true;
+            }
+
+            if (isHighlight) setHighlight(); else setBase();
+
+            doc.text(piece, cursorX, cursorY);
+            cursorX += w;
+            atLineStart = false;
+        }
+
+        // move baseline to next line
+        return cursorY + lineH;
+    }
+// Replace your existing drawWrappedWithHighlight with this:
+    function drawWrappedWithHighlight(
+        doc,
+        text,
+        x,
+        y,
+        maxWidth,
+        lineH,
+        baseRGB,
+        phraseRegex = /\bout\s*of\b/i,      // word-boundary, case-insensitive, allows spaces between
+        highlightRGB = [255, 20, 147]       // hot pink
+    ) {
+        const src = String(text ?? "");
+        if (!src) return y;
+
+        // Split into segments, keeping the match in the array
+        const parts = src.split(phraseRegex); // parts are [before, match, after, match, after...]
+        // Rebuild an array of {text, highlight:boolean} preserving matches
+        const segments = [];
+        const matcher = new RegExp(phraseRegex); // fresh regex for test
+        let remainder = src;
+        while (remainder.length > 0) {
+            const m = matcher.exec(remainder);
+            if (!m) {
+                segments.push({ t: remainder, hi: false });
+                break;
+            }
+            const before = remainder.slice(0, m.index);
+            if (before) segments.push({ t: before, hi: false });
+            segments.push({ t: m[0], hi: true });
+            remainder = remainder.slice(m.index + m[0].length);
+        }
+
+        const lineStartX = x;
+        let cursorX = x;
+        let cursorY = y;
+
+        const setBase = () => {
+            const [r, g, b] = baseRGB;
+            doc.setTextColor(r, g, b);
+            doc.setFont("helvetica", "normal");
+        };
+        const setHi = () => {
+            const [r, g, b] = highlightRGB;
+            doc.setTextColor(r, g, b);
+            doc.setFont("helvetica", "bold");
+        };
+
+        setBase();
+
+        // Print segment-by-segment, wrapping by measuring widths
+        const rightX = x + maxWidth;
+        // split segments further into words to allow breaking inside long normal text
+        const segQueue = [];
+        for (const seg of segments) {
+            if (seg.hi) {
+                segQueue.push(seg); // keep whole highlighted phrase together
+            } else {
+                // split normal text into words so we can wrap at spaces
+                const words = seg.t.split(/(\s+)/); // keep spaces
+                for (const w of words) {
+                    if (!w) continue;
+                    segQueue.push({ t: w, hi: false });
+                }
+            }
+        }
+
+        for (const seg of segQueue) {
+            const piece = seg.t;
+            // Newline handling (if any)
+            if (piece === "\n") {
+                cursorX = lineStartX;
+                cursorY += lineH;
+                continue;
+            }
+
+            const width = doc.getTextWidth(piece);
+            const needsWrap = piece !== " " && cursorX + width > rightX;
+
+            if (needsWrap) {
+                // wrap to next line (avoid leading spaces at start of line)
+                cursorX = lineStartX;
+                cursorY += lineH;
+                if (piece.trim().length === 0) {
+                    // skip drawing pure space at line start
+                    continue;
+                }
+            }
+
+            if (seg.hi) setHi(); else setBase();
+            doc.text(piece, cursorX, cursorY);
+            cursorX += width;
+        }
+
+        return cursorY + lineH;
+    }
+// Keep your existing wrapAndDraw helper for simple wrapped lines
+    function wrapAndDraw(doc, text, x, y, maxWidth, lineH) {
+        const lines = doc.splitTextToSize(String(text ?? ""), maxWidth);
+        for (const line of lines) {
+            doc.text(line, x, y);
+            y += lineH;
+        }
+        return y;
+    }
+
     async function exportToPDFLabels() {
         const ordered = buildOrderedUsers(selectedDay);
 
-        // Load logo data URL once (cached in state)
+        // Optional logo loader (unchanged)
         async function ensureLogo() {
             if (logoDataUrl) return logoDataUrl;
             try {
-                const res = await fetch(
-                    "https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png",
-                    { mode: "cors" }
-                );
+                const res = await fetch("https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png", { mode: "cors" });
                 const blob = await res.blob();
                 const reader = new FileReader();
-                const p = new Promise((resolve) => {
-                    reader.onloadend = () => resolve(reader.result);
-                });
+                const p = new Promise((resolve) => { reader.onloadend = () => resolve(reader.result); });
                 reader.readAsDataURL(blob);
                 const dataUrl = await p;
                 setLogoDataUrl(dataUrl);
                 return dataUrl;
-            } catch {
-                return null; // continue without a logo if it fails to load
-            }
+            } catch { return null; }
         }
 
-        // Avery 5163 = 2 columns, 4 rows per page (labels 4" x 2") on US Letter
         const doc = new jsPDF({ unit: "in", format: "letter" });
 
-        const labelWidth = 4;
-        const labelHeight = 2;
-        const marginLeft = 0.25;
-        const marginTop = 0.5;
-
-        const padLeft = 0.2; // text left padding inside a label
-        const padRight = 0.2; // right padding
-        const padTop = 0.2; // top padding
-
-        // nominal logo size (keeps ~3:1 aspect)
-        const LOGO_W = 1.0; // inches
-        const LOGO_H = 0.33; // inches
-
-        let x = marginLeft;
-        let y = marginTop;
-        let col = 0;
-        let row = 0;
+        // Avery 5163 geometry
+        const labelW = 4.0, labelH = 2.0;
+        const marginL = 0.5, marginT = 0.5;
+        const pad = 0.12;
+        const lineH = 0.18;
+        const fontSize = 11;
 
         const logo = await ensureLogo();
+        let col = 0, row = 0;
 
-        ordered.forEach((u) => {
-            // Per your request: do NOT print the schedule/days on labels
-            const lines = [
-                `${u.first ?? ""} ${u.last ?? ""}`,
-                `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`,
-                `${u.city ?? ""} ${u.state ?? ""}`,
-                `Phone: ${u.phone ?? ""}`,
-                `Dislikes: ${u.dislikes ?? ""}`,
-            ];
-
-            // set text color based on city
-            const hex = getCityColor(u.city);
-            if (hex) {
-                const [r, g, b] = hexToRgb(hex);
-                doc.setTextColor(r, g, b);
-            } else {
-                doc.setTextColor(0, 0, 0);
-            }
-
-            doc.setFontSize(11);
-
-            // Measure widest text line to decide if there's room for a top-right logo
-            const textX = x + padLeft;
-            const widths = lines.map((ln) => doc.getTextWidth(ln));
-            const maxW = Math.max(...widths, 0);
-            const rightEdgeOfText = textX + maxW;
-            const availableRight = x + labelWidth - padRight - rightEdgeOfText; // horizontal gap to right border
-
-            // Draw logo in top-right ONLY if it fits without overlapping text block
-            if (logo && availableRight >= LOGO_W + 0.05) {
-                const logoX = x + labelWidth - padRight - LOGO_W;
-                const logoY = y + padTop;
-                try {
-                    doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H);
-                } catch {
-                    // ignore image embed error
-                }
-            }
-
-            // Draw text lines
-            lines.forEach((line, idx) => {
-                doc.text(line, textX, y + 0.4 + idx * 0.3);
-            });
-
-            // advance to next slot
-            col++;
-            if (col === 2) {
-                col = 0;
-                row++;
-                x = marginLeft;
-                y += labelHeight;
-            } else {
-                x += labelWidth;
-            }
-
-            if (row === 4) {
+        ordered.forEach((u, idx) => {
+            if (row === 4 && col === 0 && idx > 0) {
                 doc.addPage();
-                x = marginLeft;
-                y = marginTop;
-                col = 0;
-                row = 0;
+                row = 0; col = 0;
             }
+
+            const x0 = marginL + col * labelW;
+            const y0 = marginT + row * labelH;
+
+            let x = x0 + pad;
+            let y = y0 + pad;
+            let maxWidth = labelW - pad * 2;
+
+            // Base text color for the WHOLE label from city color
+            const hex = getCityColor(u.city);
+            const baseRGB = hex ? hexToRgb(hex) : [0, 0, 0];
+            doc.setTextColor(...baseRGB);
+
+            // Optional logo reserves right-side width
+            if (logo) {
+                const LOGO_W = 0.8, LOGO_H = 0.28;
+                const logoX = x0 + labelW - pad - LOGO_W;
+                const logoY = y0 + pad;
+                try { doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H); } catch {}
+                maxWidth -= (LOGO_W + 0.08);
+            }
+
+            doc.setFontSize(fontSize);
+
+            // Name (bold) in base color
+            doc.setFont("helvetica", "bold");
+            y = wrapAndDraw(doc, `${u.first ?? ""} ${u.last ?? ""}`.trim(), x, y, maxWidth, lineH);
+
+            // Address + Apt line — with "out of" highlighted (bold + hot pink) and proper wrapping
+            doc.setFont("helvetica", "normal");
+            const unit = u.apt ? " " + u.apt : "";
+            const addr = `${u.address ?? ""}${unit}`;
+            y = drawWrappedWithHighlight(doc, addr, x, y, maxWidth, lineH, baseRGB, /out of/i, [255, 20, 147]);
+
+            // City + State (still base color)
+            y = wrapAndDraw(doc, `${u.city ?? ""} ${u.state ?? ""}`, x, y, maxWidth, lineH);
+
+            // Phone
+            if (u.phone) y = wrapAndDraw(doc, `Phone: ${u.phone}`, x, y, maxWidth, lineH);
+
+            // Dislikes
+            if (u.dislikes) y = wrapAndDraw(doc, `Dislikes: ${u.dislikes}`, x, y, maxWidth, lineH);
+
+            // Next slot
+            col++;
+            if (col > 1) { col = 0; row++; }
         });
 
         doc.save(`label ${tsString()}.pdf`);
     }
-
     function exportClientListPDF() {
         const ordered = buildOrderedUsers(selectedDay);
 
@@ -566,12 +710,21 @@ export default function UsersPage() {
                     flexWrap: "wrap",
                 }}
             >
+                {/*<input*/}
+                {/*    placeholder="Search..."*/}
+                {/*    value={search}*/}
+                {/*    onChange={(e) => setSearch(e.target.value)}*/}
+                {/*    style={{ padding: 6, width: 240 }}*/}
+                {/*/>*/}
                 <input
                     placeholder="Search..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     style={{ padding: 6, width: 240 }}
                 />
+                <span style={{ fontSize: 13, color: "#555" }}>
+  Total: {filteredUsers.length}
+</span>
                 <Button variant="contained" onClick={() => openModal()}>
                     Add User
                 </Button>
@@ -612,6 +765,7 @@ export default function UsersPage() {
             <table border="1" cellPadding="6" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                 <tr>
+                    <th style={{ width: 50 }}>#</th>
                     {columns.map((c) => (
                         <th
                             key={c.key}
@@ -625,22 +779,38 @@ export default function UsersPage() {
                     <th>ACTIONS</th>
                 </tr>
                 </thead>
+                {/*<thead>*/}
+                {/*<tr>*/}
+                {/*    {columns.map((c) => (*/}
+                {/*        <th*/}
+                {/*            key={c.key}*/}
+                {/*            onClick={() => handleSort(c.key)}*/}
+                {/*            style={{ cursor: "pointer" }}*/}
+                {/*            title="Click to sort"*/}
+                {/*        >*/}
+                {/*            {c.label}*/}
+                {/*        </th>*/}
+                {/*    ))}*/}
+                {/*    <th>ACTIONS</th>*/}
+                {/*</tr>*/}
+                {/*</thead>*/}
                 <tbody>
-                {filteredUsers.map((u) => (
+                {filteredUsers.map((u, i) => (
                     <tr key={u.id}>
+                        <td>{i + 1}</td>
                         <td>{u.first}</td>
                         <td>{u.last}</td>
                         <td>{u.address}</td>
                         <td>{u.apt}</td>
                         <td>
-                <span
-                    style={{
-                        color: getCityColor(u.city) || "inherit",
-                        fontWeight: 600,
-                    }}
-                >
-                  {u.city}
-                </span>
+        <span
+            style={{
+                color: getCityColor(u.city) || "inherit",
+                fontWeight: 600,
+            }}
+        >
+          {u.city}
+        </span>
                         </td>
                         <td>{u.dislikes}</td>
                         <td>{u.county}</td>
@@ -653,25 +823,15 @@ export default function UsersPage() {
                         <td>
                             {u.schedule
                                 ? ["M", "T", "W", "Th", "F", "Sa", "Su"]
-                                    .filter((_, i) => {
-                                        const k = [
-                                            "monday",
-                                            "tuesday",
-                                            "wednesday",
-                                            "thursday",
-                                            "friday",
-                                            "saturday",
-                                            "sunday",
-                                        ];
-                                        return u.schedule[k[i]];
+                                    .filter((_, idx) => {
+                                        const k = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+                                        return u.schedule[k[idx]];
                                     })
                                     .join(" ")
                                 : ""}
                         </td>
                         <td>
-                            <Button size="small" onClick={() => openModal(u)}>
-                                Edit
-                            </Button>
+                            <Button size="small" onClick={() => openModal(u)}>Edit</Button>
                             <Button
                                 size="small"
                                 color="error"

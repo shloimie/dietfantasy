@@ -1,13 +1,16 @@
 {
-  "name": "untitled",
+  "name": "Diet Fantasy Managment",
   "version": "0.1.0",
   "private": true,
+
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "postinstall": "prisma generate"
   },
+  "prisma": { "schema": "prisma/schema.prisma" }
+,
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
