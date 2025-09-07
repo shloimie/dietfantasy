@@ -2,15 +2,15 @@
   "name": "Diet Fantasy Managment",
   "version": "0.1.0",
   "private": true,
-
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
     "postinstall": "prisma generate"
   },
-  "prisma": { "schema": "prisma/schema.prisma" }
-,
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
@@ -22,20 +22,16 @@
     "next": "15.5.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "@types/node": "^20.19.13",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.6.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@types/node": "24.3.1",
-    "@types/react": "19.1.12",
-    "eslint": "^9",
-    "eslint-config-next": "15.5.2",
-    "prisma": "^6.15.0",
-    "typescript": "^5.6.3",
-    "@types/node": "^20.14.10",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
     "eslint": "^9.9.0",
-    "eslint-config-next": "15.5.2"
+    "eslint-config-next": "15.5.2",
+    "prisma": "^6.15.0"
   }
 }
