@@ -87,13 +87,38 @@ export default function UsersPage() {
 
     async function fetchUsers() {
         try {
-            const res = await fetch("/api/users", { cache: "no-store" });
-            if (!res.ok) throw new Error(`GET /api/users ${res.status}`);
-            const data = await res.json();
-            setUsers(Array.isArray(data) ? data : []);
+            // Always hit the same origin the app is served from
+            const url = `${window.location.origin}/api/users`;
+
+            const res = await fetch(url, {
+                method: "GET",
+                headers: { "accept": "application/json" },
+                cache: "no-store",
+            });
+
+            const raw = await res.text();
+
+            if (!res.ok) {
+                // Surface the actual server error (HTML or JSON)
+                throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw.slice(0, 500)}`);
+            }
+
+            let data;
+            try {
+                data = JSON.parse(raw);
+            } catch (e) {
+                // If Vercel ever returns HTML (e.g., function error), this makes it obvious
+                throw new Error(`Invalid JSON from /api/users. First 300 chars:\n${raw.slice(0, 300)}`);
+            }
+
+            if (!Array.isArray(data)) {
+                throw new Error(`Expected an array from /api/users, got ${typeof data}`);
+            }
+
+            setUsers(data);
         } catch (err) {
-            console.error("fetchUsers error:", err);
-            alert("Failed to load users. Check server/API logs.");
+            console.error("fetchUsers failed:", err);
+            alert(`Failed to load users. ${err?.message || err}`);
         }
     }
 
