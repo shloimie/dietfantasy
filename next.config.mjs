@@ -1,22 +1,20 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    // Remove images.domains; use remotePatterns instead
     images: {
-        domains: ['thedietfantasy.com'],
-        // or use remotePatterns if you want to be more specific:
-        // remotePatterns: [
-        //   {
-        //     protocol: 'https',
-        //     hostname: 'thedietfantasy.com',
-        //     pathname: '/wp-content/uploads/**',
-        //   },
-        // ],
+        remotePatterns: [
+            { protocol: 'https', hostname: 'thedietfantasy.com' },
+            // add more hosts here if needed
+        ],
+    },
+
+    // (Optional) Disable telemetry in prod builds
+    // telemetry: false,
+
+    // (Optional) for consistency with Turbopack
+    experimental: {
+        // turbopack is already enabled by your build command
     },
 };
 
-// next.config.js
-module.exports = {
-    images: {
-        remotePatterns: [{ protocol: 'https', hostname: 'thedietfantasy.com' }],
-    },
-};
 export default nextConfig;

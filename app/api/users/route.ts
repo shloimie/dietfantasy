@@ -1,60 +1,51 @@
 import { NextResponse } from "next/server";
 import prisma from "../../../lib/prisma";
 
+
 function sanitizeSchedule(input: any) {
-    if (!input || typeof input !== "object") return undefined;
-    const { id, userId, ...rest } = input;
-    const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
-    const out: Record<string, boolean> = {};
-    for (const d of days) {
-        if (d in rest) out[d] = Boolean(rest[d]);
-    }
-    return out;
+    const s = input ?? {};
+    return {
+        monday:    s.monday    ?? true,
+        tuesday:   s.tuesday   ?? true,
+        wednesday: s.wednesday ?? true,
+        thursday:  s.thursday  ?? true,
+        friday:    s.friday    ?? true,
+        saturday:  s.saturday  ?? true,
+        sunday:    s.sunday    ?? true,
+    };
 }
 
 export async function GET() {
-    const users = await prisma.user.findMany({
-        include: { schedule: true },
+    const list = await prisma.user.findMany({
         orderBy: [{ city: "asc" }, { last: "asc" }],
+        include: { schedule: true },
     });
-    return NextResponse.json(users);
+    return NextResponse.json(list);
 }
 
 export async function POST(req: Request) {
     const b = await req.json();
-
-    const defaultSchedule = {
-        monday: true, tuesday: true, wednesday: true, thursday: true,
-        friday: true, saturday: true, sunday: true,
-    };
-
     const scheduleInput = sanitizeSchedule(b.schedule);
 
-    const user = await prisma.user.create({
+    const created = await prisma.user.create({
         data: {
-            first: b.first ?? "",
-            last: b.last ?? "",
-            address: b.address ?? "",
+            first: b.first,
+            last: b.last,
+            address: b.address,
             apt: b.apt ?? null,
-            city: b.city ?? "",
+            city: b.city,
             dislikes: b.dislikes ?? null,
             county: b.county ?? null,
             zip: b.zip ?? null,
-            state: b.state ?? "",
-            phone: b.phone ?? "",
-            medicaid: Boolean(b.medicaid),
-            paused: Boolean(b.paused),
-            complex: Boolean(b.complex),
-            // ✅ Nested create; DO NOT include id/userId
-            schedule: {
-                create: {
-                    ...defaultSchedule,
-                    ...(scheduleInput || {}),
-                },
-            },
+            state: b.state,
+            phone: b.phone,
+            medicaid: !!b.medicaid,
+            paused: !!b.paused,
+            complex: !!b.complex,
+            schedule: { create: scheduleInput }, // no id/userId here either
         },
         include: { schedule: true },
     });
 
-    return NextResponse.json(user, { status: 201 });
+    return NextResponse.json(created, { status: 201 });
 }
