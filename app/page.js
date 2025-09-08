@@ -442,17 +442,18 @@ export default function UsersPage() {
         return y;
     }
 
+
     async function exportToPDFLabels() {
         const ordered = buildOrderedUsers(selectedDay);
 
-        // Optional logo loader (unchanged)
+        // fetch logo once
         async function ensureLogo() {
             if (logoDataUrl) return logoDataUrl;
             try {
                 const res = await fetch("https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png", { mode: "cors" });
                 const blob = await res.blob();
                 const reader = new FileReader();
-                const p = new Promise((resolve) => { reader.onloadend = () => resolve(reader.result); });
+                const p = new Promise((r) => { reader.onloadend = () => r(reader.result); });
                 reader.readAsDataURL(blob);
                 const dataUrl = await p;
                 setLogoDataUrl(dataUrl);
@@ -462,67 +463,102 @@ export default function UsersPage() {
 
         const doc = new jsPDF({ unit: "in", format: "letter" });
 
-        // Avery 5163 geometry
-        const labelW = 4.0, labelH = 2.0;
-        const marginL = 0.5, marginT = 0.5;
-        const pad = 0.12;
-        const lineH = 0.18;
-        const fontSize = 11;
+        // Avery 5163 geometry (10 per page): 2 cols × 5 rows, label 4"×2"
+        const labelW = 4.0;
+        const labelH = 2.0;
+        const marginL = 0.25;   // 0.25" left
+        const marginT = 0.50;   // 0.50" top
+        const colsPerPage = 2;
+        const rowsPerPage = 5;
+
+        // inner padding & layout
+        const padL = 0.20;
+        const padR = 0.20;
+        const padT = 0.20;
+
+        // logo (only if it fits)
+        const LOGO_W = 1.0;
+        const LOGO_H = 0.33;
 
         const logo = await ensureLogo();
-        let col = 0, row = 0;
+
+        // helpers
+        const wrapWidth = (hasLogo) =>
+            labelW - padL - padR - (hasLogo ? (LOGO_W + 0.06) : 0);
+
+        let col = 0;
+        let row = 0;
+        let x = marginL;
+        let y = marginT;
 
         ordered.forEach((u, idx) => {
-            if (row === 4 && col === 0 && idx > 0) {
-                doc.addPage();
-                row = 0; col = 0;
-            }
-
-            const x0 = marginL + col * labelW;
-            const y0 = marginT + row * labelH;
-
-            let x = x0 + pad;
-            let y = y0 + pad;
-            let maxWidth = labelW - pad * 2;
-
-            // Base text color for the WHOLE label from city color
+            // Set color for whole label (by city)
             const hex = getCityColor(u.city);
-            const baseRGB = hex ? hexToRgb(hex) : [0, 0, 0];
-            doc.setTextColor(...baseRGB);
-
-            // Optional logo reserves right-side width
-            if (logo) {
-                const LOGO_W = 0.8, LOGO_H = 0.28;
-                const logoX = x0 + labelW - pad - LOGO_W;
-                const logoY = y0 + pad;
-                try { doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H); } catch {}
-                maxWidth -= (LOGO_W + 0.08);
+            if (hex) {
+                const [r,g,b] = hexToRgb(hex);
+                doc.setTextColor(r,g,b);
+            } else {
+                doc.setTextColor(0,0,0);
             }
 
-            doc.setFontSize(fontSize);
+            // Build lines (no days per your earlier request)
+            const rawLines = [
+                `${u.first ?? ""} ${u.last ?? ""}`.trim(),
+                `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
+                `${u.city ?? ""} ${u.state ?? ""}`.trim(),
+                `Phone: ${u.phone ?? ""}`.trim(),
+                `Dislikes: ${u.dislikes ?? ""}`.trim(),
+            ];
 
-            // Name (bold) in base color
-            doc.setFont("helvetica", "bold");
-            y = wrapAndDraw(doc, `${u.first ?? ""} ${u.last ?? ""}`.trim(), x, y, maxWidth, lineH);
+            // Decide if logo fits based on widest unwrapped line; then wrap text
+            doc.setFontSize(11);
+            const maxNoLogo = wrapWidth(false);
+            const maxWithLogo = wrapWidth(true);
+            const widest = Math.max(...rawLines.map((ln) => doc.getTextWidth(ln)));
+            const placeLogo = logo && widest <= maxWithLogo;
 
-            // Address + Apt line — with "out of" highlighted (bold + hot pink) and proper wrapping
-            doc.setFont("helvetica", "normal");
-            const unit = u.apt ? " " + u.apt : "";
-            const addr = `${u.address ?? ""}${unit}`;
-            y = drawWrappedWithHighlight(doc, addr, x, y, maxWidth, lineH, baseRGB, /out of/i, [255, 20, 147]);
+            const maxWidth = wrapWidth(Boolean(placeLogo));
+            const lines = rawLines.flatMap((ln) => doc.splitTextToSize(ln, maxWidth));
 
-            // City + State (still base color)
-            y = wrapAndDraw(doc, `${u.city ?? ""} ${u.state ?? ""}`, x, y, maxWidth, lineH);
+            // draw logo (top-right) if placed
+            if (placeLogo) {
+                const logoX = x + labelW - padR - LOGO_W;
+                const logoY = y + padT;
+                try { doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H); } catch {}
+            }
 
-            // Phone
-            if (u.phone) y = wrapAndDraw(doc, `Phone: ${u.phone}`, x, y, maxWidth, lineH);
+            // text baseline; slightly lowered to avoid “too high” third row
+            let tx = x + padL;
+            let ty = y + padT + 0.22; // baseline start inside label
 
-            // Dislikes
-            if (u.dislikes) y = wrapAndDraw(doc, `Dislikes: ${u.dislikes}`, x, y, maxWidth, lineH);
+            // print lines with safe leading
+            const leading = 0.28; // line spacing
+            lines.forEach((ln) => {
+                // stop if we’d exceed bottom of label
+                if (ty > y + labelH - 0.20) return;
+                doc.text(ln, tx, ty);
+                ty += leading;
+            });
 
-            // Next slot
+            // advance slot
             col++;
-            if (col > 1) { col = 0; row++; }
+            if (col === colsPerPage) {
+                col = 0;
+                row++;
+                x = marginL;
+                y += labelH;
+            } else {
+                x += labelW;
+            }
+
+            // new page after 5 rows
+            if (row === rowsPerPage) {
+                doc.addPage();
+                col = 0;
+                row = 0;
+                x = marginL;
+                y = marginT;
+            }
         });
 
         doc.save(`label ${tsString()}.pdf`);
