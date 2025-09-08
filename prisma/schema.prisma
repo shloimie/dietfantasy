@@ -1,6 +1,7 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL") // plain postgresql://...
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // used by your app at runtime
+  directUrl = env("DIRECT_URL") // used by Prisma CLI for migrate/pull
 }
 
 generator client {

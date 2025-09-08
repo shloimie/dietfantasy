@@ -443,66 +443,164 @@ export default function UsersPage() {
     }
 
 
+
     async function exportToPDFLabels() {
         const ordered = buildOrderedUsers(selectedDay);
 
-        // fetch logo once
+        // --- load logo once ---
         async function ensureLogo() {
             if (logoDataUrl) return logoDataUrl;
             try {
-                const res = await fetch("https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png", { mode: "cors" });
+                const res = await fetch(
+                    "https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png",
+                    { mode: "cors" }
+                );
                 const blob = await res.blob();
                 const reader = new FileReader();
-                const p = new Promise((r) => { reader.onloadend = () => r(reader.result); });
+                const p = new Promise((resolve) => (reader.onloadend = () => resolve(reader.result)));
                 reader.readAsDataURL(blob);
                 const dataUrl = await p;
                 setLogoDataUrl(dataUrl);
                 return dataUrl;
-            } catch { return null; }
+            } catch {
+                return null;
+            }
         }
 
+        // --- jsPDF setup + Avery 5163 layout (2 cols x 5 rows = 10 per page) ---
         const doc = new jsPDF({ unit: "in", format: "letter" });
 
-        // Avery 5163 geometry (10 per page): 2 cols × 5 rows, label 4"×2"
-        const labelW = 4.0;
-        const labelH = 2.0;
-        const marginL = 0.25;   // 0.25" left
-        const marginT = 0.50;   // 0.50" top
-        const colsPerPage = 2;
-        const rowsPerPage = 5;
+        const labelWidth = 4.0;
+        const labelHeight = 2.0;
+        const marginLeft = 0.25;
+        const marginTop = 0.5;
 
-        // inner padding & layout
-        const padL = 0.20;
-        const padR = 0.20;
-        const padT = 0.20;
+        const padLeft = 0.2;
+        const padRight = 0.2;
+        const padTop = 0.35;       // tuned so rows don’t sit too high
+        const lineHeight = 0.28;
 
-        // logo (only if it fits)
         const LOGO_W = 1.0;
         const LOGO_H = 0.33;
+        const LOGO_RIGHT_PADDING = 0.15;
+
+        const highlightPink = [255, 20, 147];
 
         const logo = await ensureLogo();
 
-        // helpers
-        const wrapWidth = (hasLogo) =>
-            labelW - padL - padR - (hasLogo ? (LOGO_W + 0.06) : 0);
+        // Helper: styled wrapped drawing with highlight support
+        function drawStyledWrappedLine(line, x, y, maxWidth, baseColorRGB) {
+            if (!line) return y + lineHeight;
 
-        let col = 0;
-        let row = 0;
-        let x = marginL;
-        let y = marginT;
+            // Find "(... out of ...)" pattern; allow "0ut" too, and optional parens/digits
+            const re = /\(?\d*\s*[o0]ut\s+of\s+\d*\)?/i;
+            const m = re.exec(line);
 
-        ordered.forEach((u, idx) => {
-            // Set color for whole label (by city)
-            const hex = getCityColor(u.city);
-            if (hex) {
-                const [r,g,b] = hexToRgb(hex);
-                doc.setTextColor(r,g,b);
-            } else {
-                doc.setTextColor(0,0,0);
+            // Split into styled segments
+            const segs = m
+                ? [
+                    { text: line.slice(0, m.index), highlight: false },
+                    { text: m[0], highlight: true },
+                    { text: line.slice(m.index + m[0].length), highlight: false },
+                ]
+                : [{ text: line, highlight: false }];
+
+            // Word-wrap across styles
+            let cursorY = y;
+            let partsInLine = []; // [{text, highlight}]
+            let widthInLine = 0;
+
+            // Measure text with current style
+            function measureText(t, bold) {
+                doc.setFont(undefined, bold ? "bold" : "normal");
+                return doc.getTextWidth(t);
             }
 
-            // Build lines (no days per your earlier request)
-            const rawLines = [
+            function flushLine() {
+                let cursorX = x;
+                for (const part of partsInLine) {
+                    // color per style
+                    if (part.highlight) {
+                        doc.setTextColor(...highlightPink);
+                        doc.setFont(undefined, "bold");
+                    } else {
+                        doc.setTextColor(...baseColorRGB);
+                        doc.setFont(undefined, "normal");
+                    }
+                    doc.text(part.text, cursorX, cursorY, { baseline: "top" });
+                    cursorX += measureText(part.text, part.highlight);
+                }
+                partsInLine = [];
+                widthInLine = 0;
+                cursorY += lineHeight;
+            }
+
+            function pushToken(token, highlight) {
+                // If a single token is longer than maxWidth, hard-break it by characters
+                if (measureText(token, highlight) > maxWidth) {
+                    let buf = "";
+                    for (const ch of token) {
+                        const w = measureText(buf + ch, highlight);
+                        if (widthInLine + w > maxWidth) {
+                            // flush current buffer to new line
+                            if (buf) {
+                                partsInLine.push({ text: buf, highlight });
+                                flushLine();
+                            } else {
+                                // line is empty; place the char alone
+                                partsInLine.push({ text: ch, highlight });
+                                flushLine();
+                                continue;
+                            }
+                            buf = ch;
+                        } else {
+                            buf += ch;
+                        }
+                    }
+                    if (buf) {
+                        const w2 = measureText(buf, highlight);
+                        if (widthInLine + w2 > maxWidth) {
+                            flushLine();
+                            partsInLine.push({ text: buf, highlight });
+                            widthInLine = w2;
+                        } else {
+                            partsInLine.push({ text: buf, highlight });
+                            widthInLine += w2;
+                        }
+                    }
+                    return;
+                }
+
+                const tokenW = measureText(token, highlight);
+                if (widthInLine + tokenW > maxWidth) {
+                    flushLine();
+                }
+                partsInLine.push({ text: token, highlight });
+                widthInLine += tokenW;
+            }
+
+            // Process each styled segment word by word (keep spaces)
+            for (const seg of segs) {
+                if (!seg.text) continue;
+                // Split but keep whitespace as separate tokens
+                const tokens = seg.text.split(/(\s+)/);
+                for (const tk of tokens) {
+                    pushToken(tk, seg.highlight);
+                }
+            }
+
+            if (partsInLine.length) flushLine();
+            return cursorY;
+        }
+
+        // Iterate labels in grid
+        let x = marginLeft;
+        let y = marginTop;
+        let col = 0;
+        let row = 0;
+
+        ordered.forEach((u) => {
+            const lines = [
                 `${u.first ?? ""} ${u.last ?? ""}`.trim(),
                 `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
                 `${u.city ?? ""} ${u.state ?? ""}`.trim(),
@@ -510,59 +608,62 @@ export default function UsersPage() {
                 `Dislikes: ${u.dislikes ?? ""}`.trim(),
             ];
 
-            // Decide if logo fits based on widest unwrapped line; then wrap text
+            // City color for the WHOLE label (base color)
+            const hex = getCityColor(u.city);
+            const baseRGB = hex ? hexToRgb(hex) : [0, 0, 0];
+
             doc.setFontSize(11);
-            const maxNoLogo = wrapWidth(false);
-            const maxWithLogo = wrapWidth(true);
-            const widest = Math.max(...rawLines.map((ln) => doc.getTextWidth(ln)));
-            const placeLogo = logo && widest <= maxWithLogo;
 
-            const maxWidth = wrapWidth(Boolean(placeLogo));
-            const lines = rawLines.flatMap((ln) => doc.splitTextToSize(ln, maxWidth));
+            // If there is a logo, reserve right-side width for all lines
+            const reservedRight = logo ? (LOGO_W + LOGO_RIGHT_PADDING) : 0;
+            const maxTextWidth = Math.max(
+                0,
+                labelWidth - padLeft - padRight - reservedRight
+            );
 
-            // draw logo (top-right) if placed
-            if (placeLogo) {
-                const logoX = x + labelW - padR - LOGO_W;
-                const logoY = y + padT;
-                try { doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H); } catch {}
+            // Draw logo at top-right (doesn't overlap the text area we reserved)
+            if (logo) {
+                try {
+                    const logoX = x + labelWidth - LOGO_W - LOGO_RIGHT_PADDING;
+                    const logoY = y + 0.10;
+                    doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H);
+                } catch {}
             }
 
-            // text baseline; slightly lowered to avoid “too high” third row
-            let tx = x + padL;
-            let ty = y + padT + 0.22; // baseline start inside label
+            // Draw text with wrapping + highlighting
+            let lineY = y + padTop;
+            const textX = x + padLeft;
 
-            // print lines with safe leading
-            const leading = 0.28; // line spacing
-            lines.forEach((ln) => {
-                // stop if we’d exceed bottom of label
-                if (ty > y + labelH - 0.20) return;
-                doc.text(ln, tx, ty);
-                ty += leading;
-            });
+            for (const line of lines) {
+                lineY = drawStyledWrappedLine(line, textX, lineY, maxTextWidth, baseRGB);
+            }
 
-            // advance slot
+            // Next slot
             col++;
-            if (col === colsPerPage) {
+            if (col === 2) {
                 col = 0;
                 row++;
-                x = marginL;
-                y += labelH;
+                x = marginLeft;
+                y += labelHeight;
             } else {
-                x += labelW;
+                x += labelWidth;
             }
 
-            // new page after 5 rows
-            if (row === rowsPerPage) {
+            // New page after 5 rows
+            if (row === 5) {
                 doc.addPage();
+                x = marginLeft;
+                y = marginTop;
                 col = 0;
                 row = 0;
-                x = marginL;
-                y = marginT;
             }
         });
 
         doc.save(`label ${tsString()}.pdf`);
     }
+
+
+
     function exportClientListPDF() {
         const ordered = buildOrderedUsers(selectedDay);
 
