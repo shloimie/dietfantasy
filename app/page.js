@@ -727,6 +727,7 @@ export default function UsersPage() {
 
     return (
         <div style={{ padding: 20, fontFamily: "Arial, sans-serif" }}>
+            <meta key={1104}/>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
                 <Image
                     src="https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png"
@@ -788,7 +789,7 @@ export default function UsersPage() {
                     Export Excel
                 </Button>
                 <Button variant="outlined" onClick={() => exportToPDFLabels()}>
-                    Export Labels PDF
+                    Export Labels
                 </Button>
                 <Button variant="outlined" onClick={exportClientListPDF}>
                     Client List PDF
