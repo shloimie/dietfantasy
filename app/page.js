@@ -486,39 +486,102 @@ export default function UsersPage() {
         const wrapWidth = (hasLogo) =>
             labelW - padL - padR - (hasLogo ? (LOGO_W + 0.06) : 0);
 
+        // highlight: match "out of" ignoring case; allow O or 0
+        const OUT_OF_RE = /([o0]ut\s*of)/ig;
+
+        function drawLineWithHighlight(line, xStart, yStart, maxW, baseRGB, highlightRGB) {
+            let x = xStart;
+            let y = yStart;
+            let drew = false;
+
+            // Split into "highlight" vs "normal" parts
+            const regex = /(out\s+of|\(\s*\d+\s*0?ut\s+of\s+\d+\s*\))/i;
+            const parts = [];
+            let remaining = line;
+            let match;
+            while ((match = regex.exec(remaining))) {
+                const idx = match.index;
+                if (idx > 0) parts.push({ text: remaining.slice(0, idx), hl: false });
+                parts.push({ text: match[0], hl: true });
+                remaining = remaining.slice(idx + match[0].length);
+            }
+            if (remaining) parts.push({ text: remaining, hl: false });
+
+            // If no highlight, just wrap normally
+            if (!parts.some(p => p.hl)) {
+                const wrapped = doc.splitTextToSize(line, maxW);
+                wrapped.forEach((ln) => { doc.text(ln, x, y); y += 0.28; drew = true; });
+                return y;
+            }
+
+            // Otherwise, render each token
+            parts.forEach((part) => {
+                const tokens = part.text.split(/(\s+)/);
+                const useHighlight = part.hl;
+                for (const tk of tokens) {
+                    const w = doc.getTextWidth(tk);
+                    if (tk.trim() && x + w > xStart + maxW) { x = xStart; y += 0.28; }
+                    if (useHighlight && tk.trim()) {
+                        doc.setFont(undefined, "bold");
+                        doc.setTextColor(...highlightRGB);
+                    } else {
+                        doc.setFont(undefined, "normal");
+                        doc.setTextColor(...baseRGB);
+                    }
+                    doc.text(tk, x, y);
+                    x += w;
+                    drew = true;
+                    if (/^\s+$/.test(tk) && x + doc.getTextWidth(" ") > xStart + maxW) {
+                        x = xStart;
+                        y += 0.28;
+                    }
+                }
+            });
+
+            // Always advance to next baseline after finishing
+            if (drew) y += 0.28;
+
+            // Reset
+            doc.setFont(undefined, "normal");
+            doc.setTextColor(...baseRGB);
+
+            return y;
+        }
+
+
         let col = 0;
         let row = 0;
         let x = marginL;
         let y = marginT;
 
-        ordered.forEach((u, idx) => {
+        ordered.forEach((u) => {
             // Set color for whole label (by city)
             const hex = getCityColor(u.city);
-            if (hex) {
-                const [r,g,b] = hexToRgb(hex);
-                doc.setTextColor(r,g,b);
-            } else {
-                doc.setTextColor(0,0,0);
-            }
+            const baseRGB = hex ? hexToRgb(hex) : [0, 0, 0];
+            const highlightRGB = [255, 20, 147]; // bright pink
 
-            // Build lines (no days per your earlier request)
-            const rawLines = [
-                `${u.first ?? ""} ${u.last ?? ""}`.trim(),
-                `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
-                `${u.city ?? ""} ${u.state ?? ""}`.trim(),
-                `Phone: ${u.phone ?? ""}`.trim(),
-                `Dislikes: ${u.dislikes ?? ""}`.trim(),
-            ];
+            doc.setTextColor(...baseRGB);
+            doc.setFontSize(11);
+
+            const lineName = `${u.first ?? ""} ${u.last ?? ""}`.trim();
+            const lineAddrRaw = `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim();
+            const lineCity = `${u.city ?? ""} ${u.state ?? ""}`.trim();
+            const linePhone = `Phone: ${u.phone ?? ""}`.trim();
+            const lineDislike = `Dislikes: ${u.dislikes ?? ""}`.trim();
 
             // Decide if logo fits based on widest unwrapped line; then wrap text
-            doc.setFontSize(11);
             const maxNoLogo = wrapWidth(false);
             const maxWithLogo = wrapWidth(true);
-            const widest = Math.max(...rawLines.map((ln) => doc.getTextWidth(ln)));
+            const widest = Math.max(
+                doc.getTextWidth(lineName),
+                doc.getTextWidth(lineAddrRaw),
+                doc.getTextWidth(lineCity),
+                doc.getTextWidth(linePhone),
+                doc.getTextWidth(lineDislike),
+                0
+            );
             const placeLogo = logo && widest <= maxWithLogo;
-
             const maxWidth = wrapWidth(Boolean(placeLogo));
-            const lines = rawLines.flatMap((ln) => doc.splitTextToSize(ln, maxWidth));
 
             // draw logo (top-right) if placed
             if (placeLogo) {
@@ -527,18 +590,28 @@ export default function UsersPage() {
                 try { doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H); } catch {}
             }
 
-            // text baseline; slightly lowered to avoid “too high” third row
-            let tx = x + padL;
+            // text baseline; slightly lowered
+            const tx = x + padL;
             let ty = y + padT + 0.22; // baseline start inside label
 
-            // print lines with safe leading
-            const leading = 0.28; // line spacing
-            lines.forEach((ln) => {
-                // stop if we’d exceed bottom of label
-                if (ty > y + labelH - 0.20) return;
-                doc.text(ln, tx, ty);
-                ty += leading;
-            });
+            // 1) Name (wrapped)
+            doc.setTextColor(...baseRGB);
+            doc.setFont(undefined, "normal");
+            doc.splitTextToSize(lineName, maxWidth).forEach((ln) => { doc.text(ln, tx, ty); ty += 0.28; });
+
+            // 2) Address + APT with "out of" highlight
+            ty = drawLineWithHighlight(lineAddrRaw, tx, ty, maxWidth, baseRGB, highlightRGB);
+
+            // 3) City/State (wrapped)
+            doc.setTextColor(...baseRGB);
+            doc.setFont(undefined, "normal");
+            doc.splitTextToSize(lineCity, maxWidth).forEach((ln) => { doc.text(ln, tx, ty); ty += 0.28; });
+
+            // 4) Phone (wrapped)
+            doc.splitTextToSize(linePhone, maxWidth).forEach((ln) => { doc.text(ln, tx, ty); ty += 0.28; });
+
+            // 5) Dislikes (wrapped)
+            doc.splitTextToSize(lineDislike, maxWidth).forEach((ln) => { doc.text(ln, tx, ty); ty += 0.28; });
 
             // advance slot
             col++;
@@ -563,6 +636,8 @@ export default function UsersPage() {
 
         doc.save(`label ${tsString()}.pdf`);
     }
+
+
     function exportClientListPDF() {
         const ordered = buildOrderedUsers(selectedDay);
 
