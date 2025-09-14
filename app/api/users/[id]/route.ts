@@ -1,9 +1,9 @@
 export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import prisma from "../../../../lib/prisma";
+import { geocodeIfNeeded } from "../../../../lib/geocode";
 
-
-// small helper so we always have all 7 keys (default true if missing)
+// keep all 7 keys, default true
 function sanitizeSchedule(input: any) {
     const s = input ?? {};
     return {
@@ -22,7 +22,7 @@ export async function GET(
     _req: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await params;           // ✅ await params
+    const { id } = await params;
     const user = await prisma.user.findUnique({
         where: { id: Number(id) },
         include: { schedule: true },
@@ -36,9 +36,34 @@ export async function PUT(
     req: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await params;           // ✅ await params
+    const { id } = await params;
     const b = await req.json();
     const scheduleInput = sanitizeSchedule(b.schedule);
+
+    // fetch current so we can detect address changes
+    const current = await prisma.user.findUnique({
+        where: { id: Number(id) },
+        select: {
+            address: true, apt: true, city: true, state: true, zip: true,
+            latitude: true, longitude: true, geocodedAt: true,
+        },
+    });
+
+    const addrChanged =
+        current?.address !== b.address ||
+        current?.apt     !== (b.apt ?? null) ||
+        current?.city    !== b.city ||
+        current?.state   !== b.state ||
+        current?.zip     !== (b.zip ?? null);
+
+    const { lat, lng } = await geocodeIfNeeded(
+        {
+            address: b.address, apt: b.apt, city: b.city, state: b.state, zip: b.zip,
+            latitude: addrChanged ? null : current?.latitude ?? null,
+            longitude: addrChanged ? null : current?.longitude ?? null,
+        },
+        addrChanged // force geocode when address changed
+    );
 
     const updated = await prisma.user.update({
         where: { id: Number(id) },
@@ -56,13 +81,17 @@ export async function PUT(
             medicaid: !!b.medicaid,
             paused: !!b.paused,
             complex: !!b.complex,
-            // ⬇️ IMPORTANT: in nested upsert, DO NOT pass `id` or `userId`
             schedule: {
                 upsert: {
                     create: scheduleInput,
                     update: scheduleInput,
                 },
             },
+            latitude: lat,
+            longitude: lng,
+            geocodedAt: addrChanged
+                ? (lat != null && lng != null ? new Date() : null)
+                : current?.geocodedAt ?? null,
         },
         include: { schedule: true },
     });
@@ -75,8 +104,8 @@ export async function DELETE(
     _req: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await params;           // ✅ await params
-    // optional: delete schedule first if your relation isn’t cascading
+    const { id } = await params;
+    // if your FK isn't cascading, remove schedule rows first
     await prisma.schedule.deleteMany({ where: { userId: Number(id) } }).catch(() => {});
     const deleted = await prisma.user.delete({ where: { id: Number(id) } });
     return NextResponse.json({ ok: true, id: deleted.id });

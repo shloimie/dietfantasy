@@ -26,6 +26,12 @@ model User {
 
   schedule Schedule?
 
+  latitude   Float?
+  longitude  Float?
+  geocodedAt DateTime?
+  lat        Float?    @db.DoublePrecision
+  lng        Float?    @db.DoublePrecision
+
   @@map("User") // table is public."User"
 }
 
