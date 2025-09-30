@@ -60,5 +60,5 @@ export function exportClientListPDF(ordered, tsString) {
         drawRow(name);
     });
 
-    doc.save(`client list ${tsString()}.pdf`);
+    doc.save(`client list ${tsString}.pdf`);
 }

@@ -1,57 +1,108 @@
-import React from "react";
-import { Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, TextField } from "@mui/material";
-import DeleteIcon from "@mui/icons-material/Delete";
+// components/CityColorsDialog.jsx
+"use client";
+
+import * as React from "react";
+import {
+    Dialog, DialogTitle, DialogContent, DialogActions,
+    Button, TextField, Chip, Stack, Box
+} from "@mui/material";
 
 export default function CityColorsDialog({
-                                             open, onClose,
-                                             cityColors, addCityColor, removeCityColor
+                                             open,
+                                             onClose,
+                                             cityColors = {},      // <- defensively default to {}
+                                             onChange = () => {},  // <- safe no-op
                                          }) {
-    const [cityInput, setCityInput] = React.useState("");
-    const [colorInput, setColorInput] = React.useState("#008000");
+    const [localColors, setLocalColors] = React.useState(cityColors || {});
+    const [newCity, setNewCity] = React.useState("");
+    const [newHex, setNewHex] = React.useState("#377eb8");
+
+    React.useEffect(() => {
+        // Sync when parent colors change
+        setLocalColors(cityColors && typeof cityColors === "object" ? { ...cityColors } : {});
+    }, [cityColors]);
+
+    const handleSet = (city, hex) => {
+        if (!city) return;
+        setLocalColors((prev) => ({ ...prev, [city]: hex || "#377eb8" }));
+    };
+
+    const handleDelete = (city) => {
+        setLocalColors((prev) => {
+            const next = { ...prev };
+            delete next[city];
+            return next;
+        });
+    };
+
+    const handleSave = () => {
+        onChange(localColors); // push up to parent
+        onClose?.();
+    };
+
+    const entries = Object.entries(localColors || {}).sort((a, b) =>
+        a[0].localeCompare(b[0])
+    );
 
     return (
-        <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle>City Colors</DialogTitle>
-            <DialogContent>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "8px 0" }}>
-                    <TextField
-                        label="City"
-                        value={cityInput}
-                        onChange={(e) => setCityInput(e.target.value)}
-                        placeholder="e.g., Monsey"
-                    />
-                    <input
-                        type="color"
-                        value={colorInput}
-                        onChange={(e) => setColorInput(e.target.value)}
-                        style={{ width: 48, height: 48, border: "none", background: "transparent", cursor: "pointer" }}
-                        aria-label="Choose color"
-                    />
-                    <Button
-                        variant="contained"
-                        onClick={async () => {
-                            await addCityColor(cityInput, colorInput);
-                            setCityInput("");
-                        }}
-                    >
-                        Add / Update
-                    </Button>
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                    {Object.entries(cityColors).map(([key, hex]) => (
-                        <Chip
-                            key={key}
-                            label={`${key} (${hex})`}
-                            style={{ background: hex, color: "#fff" }}
-                            deleteIcon={<DeleteIcon htmlColor="#fff" />}
-                            onDelete={() => removeCityColor(key)}
+            <DialogContent dividers>
+                <Stack spacing={2}>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                        <TextField
+                            label="City"
+                            value={newCity}
+                            onChange={(e) => setNewCity(e.target.value)}
+                            size="small"
+                            fullWidth
                         />
-                    ))}
-                </div>
+                        <input
+                            type="color"
+                            value={newHex}
+                            onChange={(e) => setNewHex(e.target.value)}
+                            style={{ width: 56, height: 40, border: "1px solid #ccc", borderRadius: 6 }}
+                            title="Pick color"
+                        />
+                        <Button
+                            variant="contained"
+                            onClick={() => {
+                                const c = newCity.trim();
+                                if (!c) return;
+                                handleSet(c, newHex);
+                                setNewCity("");
+                            }}
+                        >
+                            Add / Update
+                        </Button>
+                    </Box>
+
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {entries.length === 0 ? (
+                            <em style={{ opacity: 0.6 }}>No cities yet</em>
+                        ) : (
+                            entries.map(([city, hex]) => (
+                                <Chip
+                                    key={city}
+                                    label={`${city} (${hex})`}
+                                    onDelete={() => handleDelete(city)}
+                                    style={{
+                                        borderColor: hex,
+                                        borderWidth: 2,
+                                        borderStyle: "solid",
+                                        color: hex,
+                                        fontWeight: 600,
+                                    }}
+                                    variant="outlined"
+                                />
+                            ))
+                        )}
+                    </div>
+                </Stack>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose}>Close</Button>
+                <Button onClick={onClose}>Cancel</Button>
+                <Button onClick={handleSave} variant="contained">Save</Button>
             </DialogActions>
         </Dialog>
     );

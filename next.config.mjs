@@ -4,7 +4,7 @@ const nextConfig = {
     images: {
         remotePatterns: [{ protocol: "https", hostname: "thedietfantasy.com", pathname: "/**" }],
     },
-    telemetry: false,
+
 
     experimental: {},
 };

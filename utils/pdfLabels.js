@@ -1,20 +1,45 @@
-// utils/pdfLabels.js
-// Avery 5163 (4" x 2") labels, two columns x five rows.
-// Auto-shrinks font size if wrapped content won't fit vertically.
-
 import jsPDF from "jspdf";
 
-/**
- * drawStyledWrappedLine
- * - Supports highlight for "(... out of ...)" / "out of" / "0ut of" variants
- * - Word-wraps with width constraint
- * - Optional dryRun to measure height without drawing
- *
- * Returns the new y position after drawing (or measuring).
- */
-function drawStyledWrappedLine(doc, line, x, startY, maxWidth, lineH, baseRGB, opts = {}) {
-    const { dryRun = false } = opts;
+/* ====== Fit helpers ====== */
 
+/** Convert font size in points to a comfortable line height in INCHES */
+function lineHeightInches(fontPt) {
+    // ~1.8x leading looks close to your original 0.28" at 11pt
+    return (fontPt / 72) * 1.8;
+}
+
+/** Measure total height (in inches) of all label lines at current font size */
+function measureBlockHeight(doc, lines, maxWidth, lineH) {
+    let total = 0;
+    for (const line of lines) {
+        const arr = doc.splitTextToSize(String(line ?? ""), maxWidth);
+        total += Math.max(1, arr.length) * lineH;
+    }
+    return total;
+}
+
+/**
+ * Find the largest font size (pt) that fits all lines into maxHeight (in).
+ * Decreases in 0.5pt steps from startPt down to minPt.
+ */
+function findFittingFontSize(doc, lines, maxWidth, maxHeight, startPt = 11, minPt = 7) {
+    let bestPt = minPt;
+    for (let pt = startPt; pt >= minPt; pt -= 0.5) {
+        doc.setFontSize(pt);
+        const lh = lineHeightInches(pt);
+        const h = measureBlockHeight(doc, lines, maxWidth, lh);
+        if (h <= maxHeight) {
+            bestPt = pt;
+            break;
+        }
+    }
+    return { fontPt: bestPt, lineH: lineHeightInches(bestPt) };
+}
+
+/* ====== Highlight-aware wrapping/drawing ====== */
+
+// highlight-aware wrapped line with "(... out of ...)" or "0ut" variants
+function drawStyledWrappedLine(doc, line, x, startY, maxWidth, lineH, baseRGB) {
     if (!line) return startY + lineH;
 
     // allow 0 instead of o, optional digits/parens
@@ -40,19 +65,17 @@ function drawStyledWrappedLine(doc, line, x, startY, maxWidth, lineH, baseRGB, o
     };
 
     const flush = () => {
-        if (!dryRun) {
-            let cx = x;
-            for (const part of currentLine) {
-                if (part.hi) {
-                    doc.setTextColor(...highlightPink);
-                    doc.setFont(undefined, "bold");
-                } else {
-                    doc.setTextColor(...baseRGB);
-                    doc.setFont(undefined, "normal");
-                }
-                doc.text(part.t, cx, y, { baseline: "top" });
-                cx += measure(part.t, part.hi);
+        let cx = x;
+        for (const part of currentLine) {
+            if (part.hi) {
+                doc.setTextColor(...highlightPink);
+                doc.setFont(undefined, "bold");
+            } else {
+                doc.setTextColor(...baseRGB);
+                doc.setFont(undefined, "normal");
             }
+            doc.text(part.t, cx, y, { baseline: "top" });
+            cx += measure(part.t, part.hi);
         }
         currentLine = [];
         width = 0;
@@ -109,17 +132,7 @@ function drawStyledWrappedLine(doc, line, x, startY, maxWidth, lineH, baseRGB, o
     return y;
 }
 
-/** Measure total block height for given lines/font/lineHeight without drawing. */
-function measureBlockHeight(doc, lines, fontSize, maxWidth, lineHeight, baseRGB) {
-    const prevSize = doc.getFontSize();
-    doc.setFontSize(fontSize);
-    let y = 0;
-    for (const line of lines) {
-        y = drawStyledWrappedLine(doc, line, 0, y, maxWidth, lineHeight, baseRGB, { dryRun: true });
-    }
-    doc.setFontSize(prevSize);
-    return y;
-}
+/* ====== Main export ====== */
 
 export async function exportLabelsPDF(ordered, getCityColor, hexToRgb, tsString) {
     const doc = new jsPDF({ unit: "in", format: "letter" });
@@ -130,15 +143,32 @@ export async function exportLabelsPDF(ordered, getCityColor, hexToRgb, tsString)
     const marginLeft = 0.25;
     const marginTop = 0.5;
 
-    const padLeft = 0.20;
-    const padRight = 0.20;
-    const padTop = 0.35;
-    const bottomPad = 0.20;
+    const padLeft = 0.2;
+    const padRight = 0.2;
+    const padTop = 0.35;      // tuned
+    const padBottom = 0.15;   // new: explicit bottom padding
 
-    // dynamic typography bounds
-    const MAX_FONT = 11;
-    const MIN_FONT = 6; // don't go smaller than this
-    const lineHeightFromFont = (font) => Math.max(0.18, font * 0.025); // ~0.275 at 11pt
+    const LOGO_W = 1.0;
+    const LOGO_H = 0.33;
+    const LOGO_RIGHT_PADDING = 0.15;
+
+    // optional logo
+    let logoDataUrl = null;
+    async function ensureLogo() {
+        if (logoDataUrl) return logoDataUrl;
+        try {
+            const res = await fetch("https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png", { mode: "cors" });
+            const blob = await res.blob();
+            const reader = new FileReader();
+            const p = new Promise((r) => (reader.onloadend = () => r(reader.result)));
+            reader.readAsDataURL(blob);
+            logoDataUrl = await p;
+            return logoDataUrl;
+        } catch {
+            return null;
+        }
+    }
+    const logo = await ensureLogo();
 
     let x = marginLeft;
     let y = marginTop;
@@ -157,29 +187,35 @@ export async function exportLabelsPDF(ordered, getCityColor, hexToRgb, tsString)
         const hex = getCityColor(u.city);
         const baseRGB = hex ? hexToRgb(hex) : [0, 0, 0];
 
-        const maxTextWidth = Math.max(0, labelWidth - padLeft - padRight);
-        const maxTextHeight = Math.max(0, labelHeight - padTop - bottomPad);
+        // reserve right column width if logo present
+        const reservedRight = logo ? (LOGO_W + LOGO_RIGHT_PADDING) : 0;
+        const maxTextWidth = Math.max(0, labelWidth - padLeft - padRight - reservedRight);
+        const availableHeight = Math.max(0, labelHeight - padTop - padBottom);
 
-        // choose a font size that fits vertically
-        let fontSize = MAX_FONT;
-        let lineH = lineHeightFromFont(fontSize);
-        let blockH = measureBlockHeight(doc, lines, fontSize, maxTextWidth, lineH, baseRGB);
+        // 1) Find the biggest font size that fits
+        //    Start at 11pt (your original), shrink to as low as 7pt if needed
+        const { fontPt, lineH } = findFittingFontSize(doc, lines, maxTextWidth, availableHeight, 11, 7);
+        doc.setFontSize(fontPt);
 
-        while (blockH > maxTextHeight && fontSize > MIN_FONT) {
-            fontSize -= 1;
-            lineH = lineHeightFromFont(fontSize);
-            blockH = measureBlockHeight(doc, lines, fontSize, maxTextWidth, lineH, baseRGB);
+        // 2) Draw logo (doesn't affect text height since we keep to the left)
+        if (logo) {
+            try {
+                const logoX = x + labelWidth - LOGO_W - LOGO_RIGHT_PADDING;
+                const logoY = y + 0.10;
+                doc.addImage(logo, "PNG", logoX, logoY, LOGO_W, LOGO_H);
+            } catch {}
         }
 
-        // draw with chosen size
-        doc.setFontSize(fontSize);
+        // 3) Draw text using the fitted font size and computed line height
         let lineY = y + padTop;
         const textX = x + padLeft;
         for (const line of lines) {
             lineY = drawStyledWrappedLine(doc, line, textX, lineY, maxTextWidth, lineH, baseRGB);
+            // If we somehow overflow (extreme content), stop drawing further lines
+            if (lineY > y + labelHeight - padBottom) break;
         }
 
-        // advance grid
+        // 4) Advance label position
         col++;
         if (col === 2) {
             col = 0;
@@ -190,7 +226,6 @@ export async function exportLabelsPDF(ordered, getCityColor, hexToRgb, tsString)
             x += labelWidth;
         }
 
-        // new page after 5 rows
         if (row === 5) {
             doc.addPage();
             x = marginLeft;
@@ -200,5 +235,5 @@ export async function exportLabelsPDF(ordered, getCityColor, hexToRgb, tsString)
         }
     });
 
-    doc.save(`labels ${tsString()}.pdf`);
+    doc.save(`label ${tsString()}.pdf`);
 }

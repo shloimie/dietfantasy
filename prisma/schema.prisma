@@ -59,3 +59,34 @@ model CityColor {
 
   @@map("CityColor") // Use your actual table name; this creates mapping only
 }
+
+model DriverRoute {
+  id           Int      @id @default(autoincrement())
+  day          String
+  driverNumber Int
+  color        String? // optional
+  stops        Stop[]
+  createdAt    DateTime @default(now())
+
+  @@map("DriverRoute")
+}
+
+model Stop {
+  id        Int         @id @default(autoincrement())
+  order     Int
+  name      String
+  address   String
+  city      String
+  state     String
+  zip       String
+  phone     String?
+  dislikes  String?
+  lat       Float?
+  lng       Float?
+  completed Boolean     @default(false)
+  proofUrl  String?
+  routeId   Int
+  route     DriverRoute @relation(fields: [routeId], references: [id])
+
+  @@map("Stop")
+}

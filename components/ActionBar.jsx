@@ -1,68 +1,79 @@
-import React from "react";
-import { Button, FormControl, InputLabel, MenuItem, Select } from "@mui/material";
+// components/ActionBar.jsx
+"use client";
 
+import * as React from "react";
+import { Box, Button, Stack } from "@mui/material";
+
+/**
+ * ActionBar
+ * - Buttons only disable when `busy === true`
+ * - All handlers are optional (safe no-ops by default)
+ */
 export default function ActionBar({
-                                      search, setSearch,
-                                      selectedDay, setSelectedDay,
-                                      onAdd, onExportExcel, onExportLabels, onExportClientList,
-                                      onCityColors, onGeocodeMissing, onExportDrivers, setDriversModalOpen,
-                                      total
+                                      busy = false,
+                                      onAddUser = () => {},
+                                      onExportExcel = () => {},
+                                      onExportClientPdf = () => {},
+                                      onExportLabels = () => {},
+                                      onOpenCityColors = () => {},
+                                      onOpenDrivers = () => {},
+
                                   }) {
+    const disabled = Boolean(busy);
+
     return (
-        <div
-            style={{
-                marginBottom: 12,
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-            }}
-        >
-            <input
-                placeholder="Search..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ padding: 6, width: 240 }}
-            />
-            <span style={{ fontSize: 13, color: "#555" }}>
-        Total: {total}
-      </span>
+        <Box sx={{ mb: 2 }}>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
 
-            <Button variant="contained" onClick={onAdd}>Add User</Button>
-
-            <FormControl size="small" style={{ minWidth: 160 }}>
-                <InputLabel id="day-select-label">Day filter</InputLabel>
-                <Select
-                    labelId="day-select-label"
-                    value={selectedDay}
-                    label="Day filter"
-                    onChange={(e) => setSelectedDay(e.target.value)}
+                <Button
+                    variant="contained"
+                    onClick={onAddUser}
+                    disabled={disabled}
                 >
-                    <MenuItem value="all">All days</MenuItem>
-                    <MenuItem value="monday">Monday</MenuItem>
-                    <MenuItem value="tuesday">Tuesday</MenuItem>
-                    <MenuItem value="wednesday">Wednesday</MenuItem>
-                    <MenuItem value="thursday">Thursday</MenuItem>
-                    <MenuItem value="friday">Friday</MenuItem>
-                    <MenuItem value="saturday">Saturday</MenuItem>
-                    <MenuItem value="sunday">Sunday</MenuItem>
-                </Select>
-            </FormControl>
+                    Add User
+                </Button>
 
-            <Button variant="outlined" onClick={onExportExcel}>Export Excel</Button>
-            <Button variant="outlined" onClick={onExportLabels}>Export Labels PDF</Button>
-            <Button variant="outlined" onClick={onExportClientList}>Client List PDF</Button>
+                <Button
+                    variant="outlined"
+                    onClick={onExportExcel}
+                    disabled={disabled}
+                >
+                    Export Excel
+                </Button>
 
-            <Button variant="text" onClick={onCityColors}>City Colors</Button>
-            <Button
-                variant="outlined"
+                <Button
+                    variant="outlined"
+                    onClick={onExportClientPdf}
+                    disabled={disabled}
+                >
+                    Export Clients (PDF)
+                </Button>
 
-                onClick={() => setDriversModalOpen(true)}
-            >
-                Drivers
-            </Button>
-            {/*<Button variant="text" onClick={onGeocodeMissing}>Geocode Missing</Button>*/}
-            {/*<Button variant="text" onClick={onExportDrivers}>Drivers PDF</Button>*/}
-        </div>
+                <Button
+                    variant="outlined"
+                    onClick={onExportLabels}
+                    disabled={disabled}
+                >
+                    Labels (PDF)
+                </Button>
+
+                <Button
+                    variant="outlined"
+                    onClick={onOpenCityColors}
+                    disabled={disabled}
+                >
+                    City Colors
+                </Button>
+
+                <Button
+                    variant="contained"
+                    color="info"
+                    onClick={onOpenDrivers}
+                    disabled={disabled}
+                >
+                    Drivers
+                </Button>
+            </Stack>
+        </Box>
     );
 }

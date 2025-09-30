@@ -30,17 +30,28 @@ export default function UsersTable({
     return (
         <table border="1" cellPadding="6" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
+
             <tr>
+
                 <th style={{ width: 50 }}>#</th>
                 {columns.map((c) => (
+                    // <th
+                    //     key={c.key}
+                    //     onClick={() => onSort(c.key)}
+                    //     style={{ cursor: "pointer" }}
+                    //     title="Click to sort"
+                    // >
+                    //     {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
+                    // </th>
+
                     <th
-                        key={c.key}
-                        onClick={() => onSort(c.key)}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                    >
-                        {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
-                    </th>
+                    key={c.key}
+                onClick={() => onSort && onSort(c.key)}
+                style={{ cursor: onSort ? "pointer" : "default" }}
+                title={onSort ? "Click to sort" : undefined}
+            >
+                {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
+            </th>
                 ))}
 
             <th>GEO</th>
@@ -88,11 +99,18 @@ export default function UsersTable({
                         {u.lat != null && u.lng != null ? "✓" : "—"}
                     </td>
                     <td>
-                        <Button size="small" onClick={() => onEdit(u)}>Edit</Button>
+                        <Button
+                            size="small"
+                            onClick={() => onEdit?.(u)}
+                            disabled={!onEdit}
+                        >
+                            Edit
+                        </Button>
                         <Button
                             size="small"
                             color="error"
-                            onClick={() => onDelete(u.id)}
+                            onClick={() => onDelete?.(u.id)}
+                            disabled={!onDelete}
                             style={{ marginLeft: 6 }}
                         >
                             Delete
