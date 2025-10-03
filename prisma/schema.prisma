@@ -1,12 +1,19 @@
+// prisma/schema.prisma
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL") // used by your app at runtime
-  directUrl = env("DIRECT_URL") // used by Prisma CLI for migrate/pull
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
+
+/**
+ * ──────────────────────────────────────────────────────────
+ * EXISTING TABLES (unchanged from your project)
+ * ──────────────────────────────────────────────────────────
+ */
 
 model User {
   id       Int     @id @default(autoincrement())
@@ -32,7 +39,7 @@ model User {
   lat        Float?    @db.DoublePrecision
   lng        Float?    @db.DoublePrecision
 
-  @@map("User") // table is public."User"
+  @@map("User") // maps Prisma model User -> table public."User"
 }
 
 model Schedule {
@@ -48,7 +55,7 @@ model Schedule {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("Schedule") // Use your actual table name here if different
+  @@map("Schedule")
 }
 
 model CityColor {
@@ -57,36 +64,60 @@ model CityColor {
   color      String
   updated_at DateTime @default(now())
 
-  @@map("CityColor") // Use your actual table name; this creates mapping only
+  @@map("CityColor")
 }
 
-model DriverRoute {
-  id           Int      @id @default(autoincrement())
-  day          String
-  driverNumber Int
-  color        String? // optional
-  stops        Stop[]
-  createdAt    DateTime @default(now())
+/**
+ * ──────────────────────────────────────────────────────────
+ * NEW SEPARATED TABLES (no route relational table)
+ * Drivers reference their stops by JSON array of stop IDs.
+ * Stops are independent rows (optionally mirror assignedDriverId).
+ * ──────────────────────────────────────────────────────────
+ */
 
-  @@map("DriverRoute")
+model Driver {
+  id        Int      @id @default(autoincrement())
+  day       String
+  name      String
+  color     String
+  stopIds   Json // array<int> of Stop.id (no FK)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([day])
+  @@map("Driver")
 }
 
 model Stop {
-  id        Int         @id @default(autoincrement())
-  order     Int
-  name      String
-  address   String
-  city      String
-  state     String
-  zip       String
-  phone     String?
-  dislikes  String?
-  lat       Float?
-  lng       Float?
-  completed Boolean     @default(false)
-  proofUrl  String?
-  routeId   Int
-  route     DriverRoute @relation(fields: [routeId], references: [id])
+  id               Int      @id @default(autoincrement())
+  day              String
+  userId           Int?
+  order            Int?
+  name             String
+  address          String
+  apt              String?
+  city             String
+  state            String
+  zip              String
+  phone            String?
+  dislikes         String?
+  lat              Float?
+  lng              Float?
+  completed        Boolean  @default(false)
+  proofUrl         String?
+  assignedDriverId Int? // convenience mirror only; NOT a relation
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  @@index([day])
   @@map("Stop")
 }
+
+/**
+ * ──────────────────────────────────────────────────────────
+ * DEPRECATED (no longer used):
+ * - DriverRoute
+ * - RoutePlan
+ * Remove/ignore in DB if present.
+ * ──────────────────────────────────────────────────────────
+ */

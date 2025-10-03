@@ -1,84 +1,92 @@
-// app/api/route/generate/route.ts
+// app/api/route/generate/route.js
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { planRoutesBalancedByMiles } from "../../../../utils/routing";
+import prisma from "../../../../lib/prisma";
 
-const prisma = new PrismaClient();
+const palette = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
 
-type Body = { day?: string; driverCount?: number };
-
-function normalizeDay(raw?: string | null) {
-    const s = String(raw ?? "all").toLowerCase().trim();
-    const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
-    return days.includes(s) ? s : "all";
+function isUserForDay(day, schedule) {
+    if (!schedule) return day === "all";
+    const key = String(day).toLowerCase();
+    if (key === "all") return true;
+    return Boolean(schedule[key]);
 }
 
-export async function POST(req: Request) {
-    const { day = "all", driverCount = 6 } = (await req.json() as Body) || {};
-    const d = normalizeDay(day);
+export async function POST(req) {
+    try {
+        const body = await req.json();
+        const day = body?.day || "all";
+        const driverCount = Number(body?.driverCount || 6);
 
-    // load users
-    const users = await prisma.user.findMany({ include: { schedule: true } });
-    const candidates = users
-        .filter(u => !u.paused)
-        .filter(u => {
-            const lat = u.lat ?? u.latitude;
-            const lng = u.lng ?? u.longitude;
-            return lat != null && lng != null;
-        })
-        .filter(u => {
-            if (d === "all") return true;
-            const s = (u as any).schedule || {};
-            return Boolean(s[d]);
-        })
-        .map(u => ({
-            id: u.id,
-            lat: Number(u.lat ?? u.latitude),
-            lng: Number(u.lng ?? u.longitude),
-            name: `${u.first ?? ""} ${u.last ?? ""}`.trim(),
-            address: `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
-            city: u.city ?? "",
-            state: u.state ?? "",
-            zip: u.zip ?? "",
-            phone: u.phone ?? "",
-            dislikes: u.dislikes ?? "",
-        }));
+        // rebuild drivers
+        await prisma.driver.deleteMany({ where: { day } });
+        const drivers = [];
+        for (let i = 0; i < driverCount; i++) {
+            drivers.push(
+                await prisma.driver.create({
+                    data: { day, name: `Driver ${i + 1}`, color: palette[i % palette.length], stopIds: [] },
+                })
+            );
+        }
 
-    const routes = planRoutesBalancedByMiles(candidates, driverCount);
+        // rebuild stops from User
+        await prisma.stop.deleteMany({ where: { day } });
 
-    // wipe old
-    await prisma.stop.deleteMany({ where: { route: { day: d } } });
-    await prisma.driverRoute.deleteMany({ where: { day: d } });
-
-    // create new
-    const createdRoutes = [];
-    for (let i = 0; i < routes.length; i++) {
-        const stopsData = routes[i].map((u, idx) => ({
-            order: idx + 1,
-            name: u.name,
-            address: u.address,
-            city: u.city,
-            state: u.state,
-            zip: u.zip,
-            phone: u.phone,
-            dislikes: u.dislikes,
-            // keep lat/lng in Stop if you want map view
-            lat: u.lat,
-            lng: u.lng,
-        }));
-
-        const routeRow = await prisma.driverRoute.create({
-            data: {
-                day: d,
-                driverNumber: i + 1,
-                stops: { create: stopsData },
+        const users = await prisma.user.findMany({
+            where: {
+                paused: false,
+                OR: [{ lat: { not: null } }, { latitude: { not: null } }],
+                AND: [{ OR: [{ lng: { not: null } }, { longitude: { not: null } }] }],
             },
-            include: { stops: true },
+            include: { schedule: true },
         });
 
-        createdRoutes.push(routeRow);
-    }
+        const stopsToCreate = users
+            .filter((u) => isUserForDay(day, u.schedule))
+            .map((u) => ({
+                day,
+                userId: u.id,
+                order: null,
+                name: `${u.first ?? ""} ${u.last ?? ""}`.trim() || "Unnamed",
+                address: `${u.address ?? ""}`.trim(),
+                apt: u.apt ?? null,
+                city: u.city ?? "",
+                state: u.state ?? "",
+                zip: u.zip ?? "",
+                phone: u.phone ?? null,
+                dislikes: u.dislikes ?? null,
+                lat: (u.lat ?? u.latitude) ?? null,
+                lng: (u.lng ?? u.longitude) ?? null,
+                completed: false,
+                proofUrl: null,
+                assignedDriverId: null,
+            }));
 
-    // return right away
-    return NextResponse.json({ day: d, routes: createdRoutes });
+        if (stopsToCreate.length) await prisma.stop.createMany({ data: stopsToCreate });
+
+        const stops = await prisma.stop.findMany({ where: { day }, orderBy: { id: "asc" } });
+
+        // round-robin distribution
+        if (drivers.length && stops.length) {
+            const buckets = drivers.map((d) => ({ id: d.id, ids: [] }));
+            let i = 0;
+            for (const s of stops) {
+                buckets[i].ids.push(s.id);
+                i = (i + 1) % buckets.length;
+            }
+            for (const b of buckets) {
+                await prisma.driver.update({ where: { id: b.id }, data: { stopIds: b.ids } });
+                if (b.ids.length) {
+                    await prisma.stop.updateMany({ where: { id: { in: b.ids } }, data: { assignedDriverId: b.id } });
+                }
+            }
+        }
+
+        const refreshed = await prisma.driver.findMany({ where: { day }, orderBy: { id: "asc" } });
+        return NextResponse.json({ drivers: refreshed }, { headers: { "Cache-Control": "no-store" } });
+    } catch (e) {
+        console.error("generate error", e);
+        return NextResponse.json({ error: "Server error" }, { status: 500 });
+    }
 }

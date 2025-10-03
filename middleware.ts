@@ -1,39 +1,48 @@
 // middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = [
+const PUBLIC_PATHS = new Set([
     "/auth/login",
-    "/api/auth/login", // allow login API
+    "/api/auth/login", // login API stays open
     "/favicon.ico",
-];
+]);
 
 const NEXT_ASSETS = /^\/(_next|assets|fonts|images)\//;
+// Allow ALL API routes (incl. /api/mobile/*) to bypass auth
+const API_PATH = /^\/api(\/|$)/;
 
 export function middleware(req: NextRequest) {
     const { pathname } = req.nextUrl;
 
-    // allow public and Next.js assets
-    if (PUBLIC_PATHS.includes(pathname) || NEXT_ASSETS.test(pathname)) {
+    // ✅ Always allow API routes (return JSON, not HTML)
+    if (API_PATH.test(pathname)) {
         return NextResponse.next();
     }
 
-    // allow dietfantasy remote logo (Next/Image fetch) – skip gating
+    // ✅ Allow public pages and Next/static assets
+    if (PUBLIC_PATHS.has(pathname) || NEXT_ASSETS.test(pathname)) {
+        return NextResponse.next();
+    }
+
+    // ✅ Allow Next/Image loader
     if (pathname.startsWith("/_next/image")) {
         return NextResponse.next();
     }
 
-    // has auth cookie?
+    // 🔐 Auth check for everything else
     const auth = req.cookies.get("app_auth")?.value;
     if (auth === "ok") return NextResponse.next();
 
-    // otherwise redirect to /auth/login
+    // 🚪 Not authed → redirect to login (preserve next=…)
     const url = req.nextUrl.clone();
     url.pathname = "/auth/login";
     url.searchParams.set("next", pathname || "/");
     return NextResponse.redirect(url);
 }
 
+// Limit middleware to non-API, non-static paths (extra safety)
 export const config = {
-    // protect everything by default
-    matcher: "/:path*",
+    matcher: [
+        "/((?!api|_next|assets|fonts|images|favicon.ico).*)",
+    ],
 };

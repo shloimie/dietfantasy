@@ -1,97 +1,43 @@
-// app/api/route/auto-assign/route.ts
+// app/api/route/auto-assign/route.js
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../../../../lib/prisma";
 
-const prisma = new PrismaClient();
+export async function POST(req) {
+    try {
+        const b = await req.json();
+        const day = b?.day || "all";
+        const newStops = Array.isArray(b?.newStops) ? b.newStops : [];
 
-// haversine distance in miles
-function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number) {
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    const R = 3958.7613;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-}
-
-function centroid(stops: { lat: number; lng: number }[]) {
-    if (!stops.length) return { lat: 0, lng: 0 };
-    let lat = 0, lng = 0;
-    for (const s of stops) {
-        lat += s.lat;
-        lng += s.lng;
-    }
-    return { lat: lat / stops.length, lng: lng / stops.length };
-}
-
-export async function POST(req: Request) {
-    const { day = "all", newStops = [] } = await req.json();
-
-    if (!Array.isArray(newStops) || !newStops.length) {
-        return NextResponse.json({ error: "No new stops provided" }, { status: 400 });
-    }
-
-    // load current routes for this day
-    const routes = await prisma.driverRoute.findMany({
-        where: { day },
-        include: { stops: true },
-    });
-
-    if (!routes.length) {
-        return NextResponse.json({ error: "No existing routes to add into" }, { status: 400 });
-    }
-
-    const added: any[] = [];
-
-    for (const stop of newStops) {
-        // pick route by centroid closeness
-        let bestRoute = routes[0];
-        let bestDist = Infinity;
-
-        for (const r of routes) {
-            const points = r.stops.map(s => ({
-                lat: Number((s as any).lat ?? 0),
-                lng: Number((s as any).lng ?? 0),
-            })).filter(p => p.lat && p.lng);
-
-            if (!points.length) continue;
-            const ctr = centroid(points);
-            const d = haversineMiles(
-                ctr.lat, ctr.lng,
-                Number(stop.lat), Number(stop.lng)
-            );
-            if (d < bestDist) {
-                bestDist = d;
-                bestRoute = r;
-            }
+        if (!newStops.length) {
+            return NextResponse.json({ ok: true, created: 0 });
         }
 
-        // find next order
-        const lastStop = await prisma.stop.findFirst({
-            where: { routeId: bestRoute.id },
-            orderBy: { order: "desc" },
-        });
-        const nextOrder = (lastStop?.order || 0) + 1;
+        const data = newStops.map((s) => ({
+            day,
+            userId: s.userId ?? null,
+            order: null,
+            name: s.name || "Unnamed",
+            address: s.address || "",
+            apt: s.apt ?? null,
+            city: s.city || "",
+            state: s.state || "",
+            zip: s.zip || "",
+            phone: s.phone ?? null,
+            dislikes: s.dislikes ?? null,
+            lat: Number.isFinite(Number(s.lat)) ? Number(s.lat) : null,
+            lng: Number.isFinite(Number(s.lng)) ? Number(s.lng) : null,
+            completed: false,
+            proofUrl: null,
+            assignedDriverId: null,
+        }));
 
-        const created = await prisma.stop.create({
-            data: {
-                routeId: bestRoute.id,
-                order: nextOrder,
-                name: stop.name,
-                address: stop.address,
-                city: stop.city,
-                state: stop.state,
-                zip: stop.zip,
-                phone: stop.phone,
-                dislikes: stop.dislikes,
-            },
-        });
+        await prisma.stop.createMany({ data });
 
-        added.push({ routeId: bestRoute.id, stop: created });
+        return NextResponse.json({ ok: true, created: data.length });
+    } catch (e) {
+        console.error("auto-assign error", e);
+        return NextResponse.json({ error: "Server error" }, { status: 500 });
     }
-
-    return NextResponse.json({ added });
 }

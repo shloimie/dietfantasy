@@ -1,39 +1,45 @@
+// app/api/mobile/stop/update/route.js
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../../../../../lib/prisma";
 
-const prisma = new PrismaClient();
-
-type Body = {
-    stopId?: string | number;
-    completed?: boolean;
-    proofUrl?: string | null;
-};
-
-export async function POST(req: Request) {
-    let payload: Body;
+/**
+ * POST /api/mobile/stop/update
+ * Body: { stopId, completed?: boolean, proofUrl?: string }
+ * Returns: { ok: true, stop }
+ *
+ * If the payload is invalid or the row is not found, returns JSON error with a proper 4xx/5xx code.
+ * (Your mobile frontend already handles HTTP errors.)
+ */
+export async function POST(req) {
     try {
-        payload = await req.json();
-    } catch {
-        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+        const body = await req.json().catch(() => ({}));
+        const stopId = Number(body?.stopId);
+        if (!Number.isFinite(stopId)) {
+            return NextResponse.json({ error: "Invalid stopId" }, { status: 400 });
+        }
+
+        const data = {};
+        if (typeof body?.completed === "boolean") data.completed = body.completed;
+        if (typeof body?.proofUrl === "string") data.proofUrl = body.proofUrl;
+
+        // If no fields provided, just return the existing stop (mobile expects JSON)
+        if (Object.keys(data).length === 0) {
+            const existing = await prisma.stop.findUnique({ where: { id: stopId } });
+            if (!existing) return NextResponse.json({ error: "Stop not found" }, { status: 404 });
+            return NextResponse.json({ ok: true, stop: existing }, { headers: { "Cache-Control": "no-store" } });
+        }
+
+        // Update
+        const updated = await prisma.stop.update({
+            where: { id: stopId },
+            data,
+        });
+
+        return NextResponse.json({ ok: true, stop: updated }, { headers: { "Cache-Control": "no-store" } });
+    } catch (err) {
+        console.error("[mobile/stop/update] POST error:", err);
+        return NextResponse.json({ error: "Server error" }, { status: 500 });
     }
-
-    const stopIdNum = Number(payload.stopId);
-    if (!stopIdNum || Number.isNaN(stopIdNum)) {
-        return NextResponse.json({ error: "Invalid stopId" }, { status: 400 });
-    }
-
-    const data: any = {};
-    if (typeof payload.completed === "boolean") data.completed = payload.completed;
-    if (typeof payload.proofUrl === "string" || payload.proofUrl === null) data.proofUrl = payload.proofUrl;
-
-    if (!Object.keys(data).length) {
-        return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
-    }
-
-    await prisma.stop.update({
-        where: { id: stopIdNum },
-        data,
-    });
-
-    return NextResponse.json({ ok: true });
 }

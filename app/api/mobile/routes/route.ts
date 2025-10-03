@@ -1,28 +1,38 @@
+// app/api/mobile/routes/route.js
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+// Adjust the import path if your prisma file lives elsewhere:
+import prisma from "../../../../lib/prisma";
 
-const prisma = new PrismaClient();
+/**
+ * GET /api/mobile/routes
+ * Returns: [{ id, name, color, stopIds:number[] }]
+ *
+ * On DB error: returns [] with 200 JSON (and logs the error server-side).
+ */
+export async function GET(req) {
+    try {
+        const { searchParams } = new URL(req.url);
+        const day = searchParams.get("day") || "all";
 
-// deterministic palette fallback if no color set on the route
-const PALETTE = [
-    "#3665F3","#E63946","#06A77D","#FF8C00","#8E44AD",
-    "#2E86AB","#E67E22","#16A085","#C0392B","#F39C12"
-];
+        const drivers = await prisma.driver.findMany({
+            where: { day },
+            orderBy: { id: "asc" },
+            select: { id: true, name: true, color: true, stopIds: true },
+        });
 
-export async function GET() {
-    // Get all routes (you can add ?day=... filter later if needed)
-    const routes = await prisma.driverRoute.findMany({
-        orderBy: { driverNumber: "asc" },
-        include: { stops: { select: { id: true }, orderBy: { order: "asc" } } },
-    });
+        const payload = drivers.map(d => ({
+            id: d.id,
+            name: d.name,
+            color: d.color,
+            stopIds: Array.isArray(d.stopIds) ? d.stopIds : [],
+        }));
 
-    const data = routes.map((r) => ({
-        id: String(r.id),
-        name: `Driver ${r.driverNumber}`,          // you can swap to a real driver name later
-        routeNumber: r.driverNumber,
-        color: r.color ?? PALETTE[(r.driverNumber - 1) % PALETTE.length],
-        stopIds: r.stops.map((s) => String(s.id)),
-    }));
-
-    return NextResponse.json(data);
+        return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
+    } catch (err) {
+        console.error("[mobile/routes] GET error:", err);
+        // IMPORTANT: still return JSON so frontend doesn't see NON_JSON_RESPONSE
+        return NextResponse.json([], { status: 200, headers: { "Cache-Control": "no-store", "X-Error": "routes-db" } });
+    }
 }

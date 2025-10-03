@@ -3,47 +3,66 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Map, Marker, Overlay } from "pigeon-maps";
 
-const COLORS = [
+const FALLBACK_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
     "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
     "#bcbd22", "#17becf",
 ];
-// components/Drive
 
 // Normalize {lat,lng} | {latitude,longitude}
 function normPoint(p) {
     if (!p) return null;
     const lat = Number(p.lat ?? p.latitude);
     const lng = Number(p.lng ?? p.longitude);
-    if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return { ...p, lat, lng };
 }
 
-export default function DriversMap({ routes = [], unrouted = [] }) {
-    // Normalize data
-    const routesN = useMemo(
-        () => (routes || []).map(r => (r || []).map(normPoint).filter(Boolean)),
-        [routes]
-    );
-    const unroutedN = useMemo(
-        () => (unrouted || []).map(normPoint).filter(Boolean),
-        [unrouted]
-    );
+// Prefer name/fullName, else first+last, else address, else "Unnamed"
+function displayName(p = {}) {
+    const byName = p.name ?? p.fullName ?? `${p.first ?? ""} ${p.last ?? ""}`.trim();
+    if (byName) return byName;
+    const addr = `${p.address ?? ""}${p.apt ? " " + p.apt : ""}`.trim();
+    return addr || "Unnamed";
+}
+
+/**
+ * Props:
+ *  - routes: Array<Array<Stop>> OR Array<{ stops: Stop[], color?: string, driverName?: string }>
+ *  - unrouted: Stop[]
+ *  - onClose?: () => void
+ *  - driverColors?: string[] (optional override per route)
+ */
+export default function DriversMap({ routes = [], unrouted = [], onClose, driverColors }) {
+    // Accept either raw stops arrays or objects with .stops
+    const normalizedRoutes = useMemo(() => {
+        return (routes || []).map((r, i) => {
+            const stops = Array.isArray(r) ? r : (r?.stops || []);
+            const colorFromRoute = (!Array.isArray(r) && (r?.color || r?.driverColor)) || driverColors?.[i];
+            const color = colorFromRoute || FALLBACK_COLORS[i % FALLBACK_COLORS.length];
+            const name = (!Array.isArray(r) && (r?.driverName || r?.name)) || `Driver ${i + 1}`;
+            return {
+                color,
+                name,
+                stops: (stops || []).map(normPoint).filter(Boolean),
+            };
+        });
+    }, [routes, driverColors]);
+
+    const unroutedN = useMemo(() => (unrouted || []).map(normPoint).filter(Boolean), [unrouted]);
 
     const allPoints = useMemo(() => {
         const pts = [];
-        for (const r of routesN) for (const p of r) pts.push(p);
+        for (const r of normalizedRoutes) for (const p of r.stops) pts.push(p);
         for (const u of unroutedN) pts.push(u);
         return pts;
-    }, [routesN, unroutedN]);
+    }, [normalizedRoutes, unroutedN]);
 
-    // Logs so we can see data arrive
     useEffect(() => {
-        console.log("[DriversMap] routes sizes:", routesN.map(r => r.length));
+        console.log("[DriversMap] routes sizes:", normalizedRoutes.map(r => r.stops.length));
         console.log("[DriversMap] unrouted:", unroutedN.length);
-    }, [routesN, unroutedN]);
+    }, [normalizedRoutes, unroutedN]);
 
-    // Map center/zoom
     const center = useMemo(() => {
         if (!allPoints.length) return [40.7128, -74.006]; // NYC fallback
         const lat = allPoints.reduce((s, p) => s + p.lat, 0) / allPoints.length;
@@ -66,15 +85,14 @@ export default function DriversMap({ routes = [], unrouted = [] }) {
         return 12;
     }, [allPoints]);
 
-    // Popup state
     const [popup, setPopup] = useState(null);
     const closePopup = () => setPopup(null);
 
     function openPopup(p, color, driverIdx = null, stopIdx = null) {
-        const name = `${p.first ?? ""} ${p.last ?? ""}`.trim() || "(unnamed)";
+        const name = displayName(p);
         const addr1 = `${p.address ?? ""}${p.apt ? " " + p.apt : ""}`.trim();
         const addr2 = `${p.city ?? ""} ${p.state ?? ""} ${p.zip ?? ""}`.trim();
-        const payload = {
+        setPopup({
             lat: p.lat,
             lng: p.lng,
             color,
@@ -84,19 +102,14 @@ export default function DriversMap({ routes = [], unrouted = [] }) {
             phone: p.phone ?? "",
             driverIdx,
             stopIdx,
-        };
-        console.log("[DriversMap] setPopup:", payload);
-        setPopup(payload);
+        });
     }
 
     function focusFirst() {
-        const firstRoute = routesN.find(r => r.length > 0);
-        const firstPoint = firstRoute?.[0] || unroutedN?.[0];
-        if (!firstPoint) {
-            console.log("[DriversMap] focusFirst: no points");
-            return;
-        }
-        openPopup(firstPoint, "#000", 0, 0);
+        const firstRoute = normalizedRoutes.find(r => r.stops.length > 0);
+        const firstPoint = firstRoute?.stops?.[0] || unroutedN?.[0];
+        if (!firstPoint) return;
+        openPopup(firstPoint, firstRoute?.color || "#000", 0, 0);
     }
 
     async function copyAddress(text) {
@@ -110,51 +123,116 @@ export default function DriversMap({ routes = [], unrouted = [] }) {
         window.open(url, "_blank", "noopener,noreferrer");
     }
 
+    // Legend items
+    const legend = useMemo(
+        () => normalizedRoutes.map((r, i) => ({
+            color: r.color,
+            label: r.name || `Driver ${i + 1}`,
+            count: r.stops.length
+        })),
+        [normalizedRoutes]
+    );
+
     return (
         <div style={{ position: "relative", width: "100%", height: 520 }}>
-            {/* Debug HUD */}
-            <div style={{
-                position: "absolute",
-                zIndex: 5,
-                top: 8,
-                left: 8,
-                background: "rgba(255,255,255,0.9)",
-                padding: "6px 8px",
-                borderRadius: 6,
-                fontSize: 12,
-                boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
-            }}>
-                <div><b>Routes:</b> {routesN.map(r => r.length).join(", ") || "—"}</div>
-                <div><b>Unrouted:</b> {unroutedN.length}</div>
-                <button
-                    onClick={focusFirst}
-                    style={{ marginTop: 6, padding: "4px 8px", cursor: "pointer" }}
-                >
-                    Focus first point
-                </button>
+            {/* Floating menu (legend + close) */}
+            <div
+                style={{
+                    position: "absolute",
+                    zIndex: 5,
+                    top: 12,
+                    right: 12,
+                    background: "rgba(255,255,255,0.96)",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    fontSize: 12,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                    minWidth: 220,
+                    pointerEvents: "auto",
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>Driver Index</div>
+                    <button
+                        onClick={() => onClose?.()}
+                        style={{
+                            border: "none",
+                            background: "transparent",
+                            fontSize: 18,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                            padding: 0,
+                            margin: 0,
+                        }}
+                        aria-label="Close map"
+                        title="Close map"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div style={{ maxHeight: 180, overflowY: "auto", paddingRight: 4 }}>
+                    {legend.length === 0 ? (
+                        <div style={{ opacity: 0.7 }}>No routes</div>
+                    ) : (
+                        legend.map((item, idx) => (
+                            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span
+                    style={{
+                        display: "inline-block",
+                        width: 14,
+                        height: 14,
+                        borderRadius: 4,
+                        background: item.color,
+                        border: "1px solid rgba(0,0,0,0.15)",
+                    }}
+                />
+                                <span style={{ flex: 1 }}>{item.label}</span>
+                                <span style={{ opacity: 0.7 }}>{item.count}</span>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, opacity: 0.75 }}>
+            Unrouted: <b>{unroutedN.length}</b>
+          </span>
+                    <button
+                        onClick={focusFirst}
+                        style={{
+                            marginLeft: "auto",
+                            background: "#f5f5f5",
+                            border: "1px solid #ddd",
+                            borderRadius: 6,
+                            padding: "4px 8px",
+                            fontSize: 12,
+                            cursor: "pointer",
+                        }}
+                    >
+                        Focus first point
+                    </button>
+                </div>
             </div>
 
             <Map
                 defaultCenter={center}
                 defaultZoom={zoom}
                 height={520}
-                onClick={() => {
-                    console.log("[DriversMap] map click");
-                    closePopup();
-                }}
+                onClick={() => { setPopup(null); }}
             >
                 {/* Driver markers */}
-                {routesN.map((route, i) =>
-                    route.map((p, idx) => (
+                {normalizedRoutes.map((route, i) =>
+                    route.stops.map((p, idx) => (
                         <Marker
                             key={`m-${i}-${p.id ?? idx}`}
                             width={36}
-                            color={COLORS[i % COLORS.length]}
+                            color={route.color}
                             anchor={[p.lat, p.lng]}
                             onClick={({ event }) => {
-                                console.log("[DriversMap] marker click", { i, idx, p });
                                 event?.stopPropagation?.();
-                                openPopup(p, COLORS[i % COLORS.length], i, idx);
+                                openPopup(p, route.color, i, idx);
                             }}
                         />
                     ))
@@ -168,14 +246,13 @@ export default function DriversMap({ routes = [], unrouted = [] }) {
                         color="#555"
                         anchor={[u.lat, u.lng]}
                         onClick={({ event }) => {
-                            console.log("[DriversMap] unrouted click", { i, u });
                             event?.stopPropagation?.();
                             openPopup(u, "#555", null, null);
                         }}
                     />
                 ))}
 
-                {/* Popup (simple Overlay — NOT render-prop) */}
+                {/* Popup */}
                 {popup && (
                     <Overlay anchor={[popup.lat, popup.lng]} offset={[0, 0]}>
                         <div
@@ -196,7 +273,7 @@ export default function DriversMap({ routes = [], unrouted = [] }) {
                             <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
                                 <div style={{ fontWeight: 700, flex: 1 }}>{popup.name}</div>
                                 <button
-                                    onClick={closePopup}
+                                    onClick={() => setPopup(null)}
                                     style={{
                                         border: "none",
                                         background: "transparent",

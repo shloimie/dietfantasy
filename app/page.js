@@ -2,12 +2,12 @@
 "use client";
 
 import * as React from "react";
-import { Box, Dialog, TextField, IconButton, InputAdornment, Button } from "@mui/material";
+import { Box, Dialog, TextField, IconButton, InputAdornment } from "@mui/material";
 import ClearIcon from "@mui/icons-material/Clear";
-import {useState} from "react";
+import { useState } from "react";
+
 import UsersTable from "../components/UsersTable";
 import ActionBar from "../components/ActionBar";
-
 import UserModal from "../components/UserModal";
 import CityColorsDialog from "../components/CityColorsDialog";
 import DriversDialog from "../components/DriversDialog";
@@ -81,8 +81,6 @@ function tsString() {
     return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
 }
 
-
-
 export default function UsersPage() {
     const { users, isLoading, refetch } = useUsersApi();
 
@@ -102,8 +100,7 @@ export default function UsersPage() {
     // Map modal + data
     const [mapOpen, setMapOpen] = React.useState(false);
     const [mapData, setMapData] = React.useState({ routes: [], selectedDay: "all", driverCount: 6 });
-    const [selectedDay, setSelectedDay] = useState("all");
-
+    const [selectedDay, setSelectedDay] = useState("all"); // (kept if used elsewhere)
 
     // Search + sort
     const [query, setQuery] = React.useState("");
@@ -121,7 +118,7 @@ export default function UsersPage() {
 
         // filter
         const filtered = !normalizedQuery ? source : source.filter((u) => {
-            const fields = ["first","last","address","apt","city","county","zip","state","phone","dislikes","medicaid"];
+            const fields = ["first", "last", "address", "apt", "city", "county", "zip", "state", "phone", "dislikes", "medicaid"];
             let hay = fields.map((k) => {
                 const v = u?.[k];
                 if (k === "medicaid") return v ? "yes" : "no";
@@ -185,10 +182,15 @@ export default function UsersPage() {
             const mod = await import("../utils/pdfLabels");
             const fn = mod.exportLabelsPDF || mod.default;
             if (typeof fn === "function") {
-                await fn(users, getCityColor, (hex) => {
-                    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
-                    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
-                }, tsString);
+                await fn(
+                    users,
+                    getCityColor,
+                    (hex) => {
+                        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
+                        return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+                    },
+                    tsString
+                );
             } else {
                 console.warn("pdfLabels: exportLabelsPDF not found");
             }
@@ -222,8 +224,8 @@ export default function UsersPage() {
 
     return (
         <Box sx={{ p: 2 }}>
-            {/* Search bar */}
-            <Box sx={{ mb: 2, mt: 1 }}>
+            {/* Search + live total counter */}
+            <Box sx={{ mb: 2, mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
                 <TextField
                     size="small"
                     fullWidth
@@ -240,6 +242,9 @@ export default function UsersPage() {
                         ) : null
                     }}
                 />
+                <Box sx={{ whiteSpace: "nowrap", color: "text.secondary", fontSize: 14 }}>
+                    Total: {displayedUsers.length}
+                </Box>
             </Box>
 
             {/* Top actions */}
@@ -251,7 +256,6 @@ export default function UsersPage() {
                 onExportLabels={handleExportLabels}
                 onOpenCityColors={() => setCityColorsOpen(true)}
                 onOpenDrivers={() => setDriversOpen(true)}
-
             />
 
             {/* Users table */}
@@ -267,11 +271,11 @@ export default function UsersPage() {
 
             {/* Modals */}
             <UserModal
-                key={editingUser?.id ?? "new"}        // remount when switching add/edit
+                key={editingUser?.id ?? "new"}
                 open={userModalOpen}
                 onClose={() => { setUserModalOpen(false); setEditingUser(null); }}
                 onSaved={refetch}
-                editingUser={editingUser}             // pass selected user (or null)
+                editingUser={editingUser}
             />
 
             <CityColorsDialog
@@ -281,7 +285,6 @@ export default function UsersPage() {
                 onSave={(newMap) => setCityColors(newMap || {})}
             />
 
-            {/* Drivers dialog — using full users list; switch to displayedUsers if you want it filtered */}
             <DriversDialog
                 open={driversOpen}
                 onClose={() => setDriversOpen(false)}
@@ -293,11 +296,6 @@ export default function UsersPage() {
                     setMapOpen(true);
                 }}
             />
-
-            {/* Quick test button; remove if you have a Drivers button elsewhere */}
-            <Box sx={{ position: "fixed", bottom: 16, right: 16, display: { xs: "none", md: "block" } }}>
-                <Button variant="contained" onClick={() => setDriversOpen(true)}>Open Drivers</Button>
-            </Box>
 
             {/* Map modal */}
             <Dialog open={mapOpen} onClose={() => setMapOpen(false)} fullWidth maxWidth="lg">
