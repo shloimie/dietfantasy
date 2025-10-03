@@ -3,65 +3,68 @@
 
 import * as React from "react";
 
-// Nice default palette to rotate through when we discover new cities
-const PALETTE = [
-    "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
-    "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62",
-    "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494",
-];
-
-function buildInitialMap(users = []) {
-    const map = {};
-    let i = 0;
-    for (const u of users) {
-        const city = (u?.city || "").trim();
-        if (!city) continue;
-        if (!map[city]) {
-            map[city] = PALETTE[i % PALETTE.length];
-            i++;
-        }
-    }
-    return map;
-}
+// match API normalization
+const norm = (s) => String(s || "").trim().toLowerCase();
 
 /**
- * useCityColors(users, initial)
- * - Always returns a non-null object for cityColors
- * - getCityColor(city) is safe to call
+ * useCityColors(initialMap?)
+ * Pure client hook for city→hex colors.
+ * - Does NOT auto-create anything from users.
+ * - All keys stored normalized (lowercase).
  */
-export default function useCityColors(users = [], initial = {}) {
-    const seeded = React.useMemo(
-        () => ({ ...buildInitialMap(users), ...(initial || {}) }),
-        [users, initial]
-    );
-
-    const [cityColors, setCityColors] = React.useState(seeded);
-
-    // keep derived map in sync if users change (only add missing keys)
-    React.useEffect(() => {
-        setCityColors((prev) => {
-            const next = { ...prev };
-            const base = buildInitialMap(users);
-            for (const [city, hex] of Object.entries(base)) {
-                if (!next[city]) next[city] = hex;
+export default function useCityColors(initial = {}) {
+    const [cityColors, setCityColors] = React.useState(() => {
+        const out = {};
+        if (initial && typeof initial === "object") {
+            for (const [k, v] of Object.entries(initial)) {
+                const hex = String(v || "").trim();
+                out[norm(k)] = hex.startsWith("#") ? hex : `#${hex}`;
             }
-            return next;
-        });
-    }, [users]);
+        }
+        return out;
+    });
 
     const getCityColor = React.useCallback(
-        (city) => (city ? cityColors[city] : undefined),
+        (city) => (city ? cityColors[norm(city)] : undefined),
         [cityColors]
     );
 
     const setCityColor = React.useCallback((city, hex) => {
         if (!city) return;
-        setCityColors((prev) => ({ ...prev, [city]: hex }));
+        const clean = String(hex || "").trim();
+        const val = clean.startsWith("#") ? clean : `#${clean}`;
+        setCityColors((prev) => ({ ...prev, [norm(city)]: val }));
+    }, []);
+
+    const removeCity = React.useCallback((city) => {
+        if (!city) return;
+        const key = norm(city);
+        setCityColors((prev) => {
+            if (!(key in prev)) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
     }, []);
 
     const setAll = React.useCallback((map) => {
-        setCityColors(map && typeof map === "object" ? { ...map } : {});
+        if (!map || typeof map !== "object") {
+            setCityColors({});
+            return;
+        }
+        const next = {};
+        for (const [k, v] of Object.entries(map)) {
+            const clean = String(v || "").trim();
+            next[norm(k)] = clean.startsWith("#") ? clean : `#${clean}`;
+        }
+        setCityColors(next);
     }, []);
 
-    return { cityColors: cityColors || {}, getCityColor, setCityColor, setAll };
+    return {
+        cityColors,
+        getCityColor,
+        setCityColor,
+        removeCity,
+        setAll,
+    };
 }

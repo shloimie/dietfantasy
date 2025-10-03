@@ -11,10 +11,14 @@ import dynamic from "next/dynamic";
 const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: false });
 
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
-import { exportLabelsPDF } from "../utils/pdfLabels";
+
+import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 import { MIN_PER_MILE, MIN_PER_STOP } from "../utils/routing";
 
-const palette = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
+const palette = [
+    "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
+    "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"
+];
 
 const nameOf = (u = {}) => {
     const n = u.name ?? u.fullName ?? `${u.first ?? ""} ${u.last ?? ""}`.trim();
@@ -63,7 +67,6 @@ export default function DriversDialog({
         setMissingBatch(missing);
         setMapOpen(true);
         loadRoutes();
-        // NOTE: no auto-open of manual dialog; footer link will open it
     }, [open, users, loadRoutes]);
 
     const handleManualGeocoded = React.useCallback(async (updates) => {
@@ -161,6 +164,31 @@ export default function DriversDialog({
         });
     }, [routes]);
 
+    // Build the inputs expected by exportRouteLabelsPDF:
+    // 1) routeStops: Array<Array<UserLike>>
+    const routeStops = React.useMemo(
+        () => routes.map(r => (r.stops || [])),
+        [routes]
+    );
+
+    // 2) driverColors: one color per driver, aligned with routes
+    const driverColors = React.useMemo(
+        () => routes.map((r, i) => r.color || palette[i % palette.length]),
+        [routes]
+    );
+
+    // timestamp helper for filename
+    function tsString() {
+        const d = new Date();
+        const mm = d.getMonth() + 1;
+        const dd = d.getDate();
+        let h = d.getHours();
+        const m = d.getMinutes();
+        const ampm = h >= 12 ? "PM" : "AM";
+        h = h % 12 || 12;
+        return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
+    }
+
     return (
         <>
             <ManualGeocodeDialog
@@ -183,6 +211,7 @@ export default function DriversDialog({
             • Unrouted: {unrouted?.length ?? 0}
           </span>
                 </DialogTitle>
+
                 <DialogContent dividers sx={{ position: "relative", p: 0 }}>
                     <Box sx={{ height: "100%", width: "100%", position: "relative" }}>
                         <DriversMapLeaflet
@@ -211,6 +240,7 @@ export default function DriversDialog({
                         )}
                     </Box>
                 </DialogContent>
+
                 <DialogActions>
                     {missingBatch.length > 0 && (
                         <Typography variant="body2" sx={{ mr: "auto", opacity: 0.8 }}>
@@ -220,11 +250,23 @@ export default function DriversDialog({
                             </Button>
                         </Typography>
                     )}
-                    <Button onClick={() => { setMapOpen(false); onClose?.(); }} disabled={busy}>Close</Button>
-                    <Button onClick={async () => { setBusy(true); try { await exportLabelsPDF(users, selectedDay); } finally { setBusy(false); } }}
-                            variant="outlined" disabled={busy || !hasRoutes}>
-                        Download Labels (PDF)
+
+                    <Button
+                        onClick={async () => {
+                            setBusy(true);
+                            try {
+                                // IMPORTANT: pass the array-of-arrays of stops
+                                await exportRouteLabelsPDF(routeStops, driverColors, tsString);
+                            } finally {
+                                setBusy(false);
+                            }
+                        }}
+                        variant="outlined"
+                        disabled={busy || !hasRoutes}
+                    >
+                        Download Labels
                     </Button>
+
                     <Button
                         onClick={async () => {
                             const countStr = window.prompt("How many drivers for the new route?", String(driverCount));

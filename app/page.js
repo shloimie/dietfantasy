@@ -2,7 +2,13 @@
 "use client";
 
 import * as React from "react";
-import { Box, Dialog, TextField, IconButton, InputAdornment } from "@mui/material";
+import {
+    Box,
+    Dialog,
+    TextField,
+    IconButton,
+    InputAdornment,
+} from "@mui/material";
 import ClearIcon from "@mui/icons-material/Clear";
 import { useState } from "react";
 
@@ -14,37 +20,7 @@ import DriversDialog from "../components/DriversDialog";
 import DriversMap from "../components/DriversMap";
 
 /* =========================
-   Color helpers
-   ========================= */
-
-const PALETTE = [
-    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
-    "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080",
-    "#e6beff", "#9a6324", "#fffac8", "#800000", "#aaffc3",
-    "#808000", "#ffd8b1", "#000075", "#808080", "#ffffff"
-];
-
-function hashStr(s) {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return Math.abs(h);
-}
-
-function buildCityColors(users) {
-    const map = {};
-    (users || []).forEach(u => {
-        const city = String(u?.city || "").trim();
-        if (!city) return;
-        if (!map[city]) {
-            const idx = hashStr(city) % PALETTE.length;
-            map[city] = PALETTE[idx];
-        }
-    });
-    return map;
-}
-
-/* =========================
-   Data loading
+   Data loading (users)
    ========================= */
 
 function useUsersApi() {
@@ -56,7 +32,7 @@ function useUsersApi() {
             setLoading(true);
             const res = await fetch("/api/users");
             const data = await res.json();
-            setUsers(Array.isArray(data) ? data : (data?.users || []));
+            setUsers(Array.isArray(data) ? data : data?.users || []);
         } catch (e) {
             console.error("Fetch /api/users failed", e);
         } finally {
@@ -64,12 +40,92 @@ function useUsersApi() {
         }
     }, []);
 
-    React.useEffect(() => { refetch(); }, [refetch]);
+    React.useEffect(() => {
+        refetch();
+    }, [refetch]);
 
     return { users, isLoading: loading, refetch };
 }
 
-/* Timestamp for filenames */
+/* =========================
+   City colors (DB-backed)
+   ========================= */
+
+const norm = (s) => String(s || "").trim().toLowerCase();
+
+function useCityColorsApi() {
+    const [cityColors, setCityColors] = React.useState({});
+
+    const fetchCityColors = React.useCallback(async () => {
+        try {
+            const res = await fetch("/api/city-colors", { cache: "no-store" });
+            const rows = await res.json(); // [{ id, city, color }]
+            const map = {};
+            for (const r of rows || []) {
+                const key = norm(r.city);
+                const raw = String(r.color || "").trim();
+                map[key] = raw.startsWith("#") ? raw : `#${raw}`;
+            }
+            setCityColors(map);
+        } catch (e) {
+            console.error("Failed to load city colors", e);
+            setCityColors({});
+        }
+    }, []);
+
+    const upsertCityColor = React.useCallback(
+        async (city, hex) => {
+            const body = {
+                city,
+                color: String(hex || "").trim().startsWith("#")
+                    ? String(hex || "").trim()
+                    : `#${String(hex || "").trim()}`,
+            };
+            await fetch("/api/city-colors", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            await fetchCityColors();
+        },
+        [fetchCityColors]
+    );
+
+    const removeCityColor = React.useCallback(
+        async (city) => {
+            await fetch("/api/city-colors", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ city }),
+            });
+            await fetchCityColors();
+        },
+        [fetchCityColors]
+    );
+
+    React.useEffect(() => {
+        fetchCityColors();
+    }, [fetchCityColors]);
+
+    const getCityColor = React.useCallback(
+        (city) => (city ? cityColors[norm(city)] || null : null),
+        [cityColors]
+    );
+
+    return {
+        cityColors,
+        getCityColor,
+        setCityColors, // local state override if needed
+        fetchCityColors,
+        upsertCityColor,
+        removeCityColor,
+    };
+}
+
+/* =========================
+   Timestamp for filenames
+   ========================= */
+
 function tsString() {
     const d = new Date();
     const mm = d.getMonth() + 1;
@@ -77,20 +133,27 @@ function tsString() {
     let h = d.getHours();
     const m = d.getMinutes();
     const ampm = h >= 12 ? "PM" : "AM";
-    h = h % 12; if (h === 0) h = 12;
+    h = h % 12;
+    if (h === 0) h = 12;
     return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
 }
+
+/* =========================
+   Page
+   ========================= */
 
 export default function UsersPage() {
     const { users, isLoading, refetch } = useUsersApi();
 
-    // City colors
-    const [cityColors, setCityColors] = React.useState({});
-    React.useEffect(() => { setCityColors(buildCityColors(users)); }, [users]);
-    const getCityColor = React.useCallback(
-        (city) => cityColors[String(city || "").trim()] || null,
-        [cityColors]
-    );
+    // City colors (DB as source of truth)
+    const {
+        cityColors,
+        getCityColor,
+        setCityColors,
+        fetchCityColors,
+        upsertCityColor,
+        removeCityColor,
+    } = useCityColorsApi();
 
     // Modals
     const [userModalOpen, setUserModalOpen] = React.useState(false);
@@ -99,39 +162,73 @@ export default function UsersPage() {
 
     // Map modal + data
     const [mapOpen, setMapOpen] = React.useState(false);
-    const [mapData, setMapData] = React.useState({ routes: [], selectedDay: "all", driverCount: 6 });
-    const [selectedDay, setSelectedDay] = useState("all"); // (kept if used elsewhere)
+    const [mapData, setMapData] = React.useState({
+        routes: [],
+        selectedDay: "all",
+        driverCount: 6,
+    });
+    const [selectedDay, setSelectedDay] = useState("all"); // if used elsewhere later
 
     // Search + sort
     const [query, setQuery] = React.useState("");
     const [sortKey, setSortKey] = React.useState(null);
     const [sortAsc, setSortAsc] = React.useState(true);
 
-    const onSort = React.useCallback((key) => {
-        setSortAsc((prev) => (key === sortKey ? !prev : true));
-        setSortKey(key);
-    }, [sortKey]);
+    const onSort = React.useCallback(
+        (key) => {
+            setSortAsc((prev) => (key === sortKey ? !prev : true));
+            setSortKey(key);
+        },
+        [sortKey]
+    );
 
     const displayedUsers = React.useMemo(() => {
         const normalizedQuery = query.trim().toLowerCase();
         const source = Array.isArray(users) ? users : [];
 
         // filter
-        const filtered = !normalizedQuery ? source : source.filter((u) => {
-            const fields = ["first", "last", "address", "apt", "city", "county", "zip", "state", "phone", "dislikes", "medicaid"];
-            let hay = fields.map((k) => {
-                const v = u?.[k];
-                if (k === "medicaid") return v ? "yes" : "no";
-                return v == null ? "" : String(v);
-            }).join(" ").toLowerCase();
+        const filtered = !normalizedQuery
+            ? source
+            : source.filter((u) => {
+                const fields = [
+                    "first",
+                    "last",
+                    "address",
+                    "apt",
+                    "city",
+                    "county",
+                    "zip",
+                    "state",
+                    "phone",
+                    "dislikes",
+                    "medicaid",
+                ];
+                let hay = fields
+                    .map((k) => {
+                        const v = u?.[k];
+                        if (k === "medicaid") return v ? "yes" : "no";
+                        return v == null ? "" : String(v);
+                    })
+                    .join(" ")
+                    .toLowerCase();
 
-            if (u?.schedule) {
-                const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
-                const short = ["m","t","w","th","f","sa","su"].filter((_, i) => u.schedule[days[i]]);
-                hay += " " + short.join(" ");
-            }
-            return hay.includes(normalizedQuery);
-        });
+                if (u?.schedule) {
+                    const days = [
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                        "saturday",
+                        "sunday",
+                    ];
+                    const short = ["m", "t", "w", "th", "f", "sa", "su"].filter(
+                        (_, i) => u.schedule[days[i]]
+                    );
+                    hay += " " + short.join(" ");
+                }
+                return hay.includes(normalizedQuery);
+            });
 
         // sort
         if (!sortKey) return filtered;
@@ -151,23 +248,28 @@ export default function UsersPage() {
     const handleExportExcel = React.useCallback(async () => {
         try {
             const mod = await import("../utils/excelExport");
-            const fn = mod.default || mod.exportExcel || mod.exportUsersToExcel || mod.exportToExcel;
+            const fn =
+                mod.default ||
+                mod.exportExcel ||
+                mod.exportUsersToExcel ||
+                mod.exportToExcel;
             if (typeof fn === "function") {
-                await fn(users);
+                await fn(displayedUsers, tsString);
             } else {
                 console.warn("excelExport: no callable export found");
             }
         } catch (e) {
             console.error("Export Excel failed:", e);
         }
-    }, [users]);
+    }, [displayedUsers]);
 
     const handleExportClientsPdf = React.useCallback(async () => {
         try {
             const mod = await import("../utils/pdfClientList");
-            const fn = mod.default || mod.buildClientListPDF || mod.exportClientListPDF;
+            const fn =
+                mod.default || mod.buildClientListPDF || mod.exportClientListPDF;
             if (typeof fn === "function") {
-                const doc = await fn(users);
+                const doc = await fn(displayedUsers, tsString);
                 if (doc?.save) doc.save(`clients ${tsString()}.pdf`);
             } else {
                 console.warn("pdfClientList: no callable export found");
@@ -175,7 +277,7 @@ export default function UsersPage() {
         } catch (e) {
             console.error("Export Clients PDF failed:", e);
         }
-    }, [users]);
+    }, [displayedUsers]);
 
     const handleExportLabels = React.useCallback(async () => {
         try {
@@ -183,11 +285,15 @@ export default function UsersPage() {
             const fn = mod.exportLabelsPDF || mod.default;
             if (typeof fn === "function") {
                 await fn(
-                    users,
+                    displayedUsers,
                     getCityColor,
                     (hex) => {
-                        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
-                        return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+                        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
+                            hex || ""
+                        );
+                        return m
+                            ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+                            : [0, 0, 0];
                     },
                     tsString
                 );
@@ -197,7 +303,7 @@ export default function UsersPage() {
         } catch (e) {
             console.error("Export Labels failed:", e);
         }
-    }, [users, getCityColor]);
+    }, [displayedUsers, getCityColor]);
 
     /* ===== Edit/Delete wiring ===== */
 
@@ -208,17 +314,20 @@ export default function UsersPage() {
         setUserModalOpen(true);
     }, []);
 
-    const handleDelete = React.useCallback(async (id) => {
-        if (!id) return;
-        if (!confirm("Delete this user?")) return;
-        try {
-            await fetch(`/api/users/${id}`, { method: "DELETE" });
-            await refetch();
-        } catch (e) {
-            console.error("Delete failed", e);
-            alert("Delete failed");
-        }
-    }, [refetch]);
+    const handleDelete = React.useCallback(
+        async (id) => {
+            if (!id) return;
+            if (!confirm("Delete this user?")) return;
+            try {
+                await fetch(`/api/users/${id}`, { method: "DELETE" });
+                await refetch();
+            } catch (e) {
+                console.error("Delete failed", e);
+                alert("Delete failed");
+            }
+        },
+        [refetch]
+    );
 
     /* ===== Render ===== */
 
@@ -235,11 +344,15 @@ export default function UsersPage() {
                     InputProps={{
                         endAdornment: query ? (
                             <InputAdornment position="end">
-                                <IconButton aria-label="Clear search" onClick={() => setQuery("")} edge="end">
+                                <IconButton
+                                    aria-label="Clear search"
+                                    onClick={() => setQuery("")}
+                                    edge="end"
+                                >
                                     <ClearIcon />
                                 </IconButton>
                             </InputAdornment>
-                        ) : null
+                        ) : null,
                     }}
                 />
                 <Box sx={{ whiteSpace: "nowrap", color: "text.secondary", fontSize: 14 }}>
@@ -250,7 +363,10 @@ export default function UsersPage() {
             {/* Top actions */}
             <ActionBar
                 busy={isLoading}
-                onAddUser={() => { setEditingUser(null); setUserModalOpen(true); }}
+                onAddUser={() => {
+                    setEditingUser(null);
+                    setUserModalOpen(true);
+                }}
                 onExportExcel={handleExportExcel}
                 onExportClientPdf={handleExportClientsPdf}
                 onExportLabels={handleExportLabels}
@@ -273,16 +389,44 @@ export default function UsersPage() {
             <UserModal
                 key={editingUser?.id ?? "new"}
                 open={userModalOpen}
-                onClose={() => { setUserModalOpen(false); setEditingUser(null); }}
+                onClose={() => {
+                    setUserModalOpen(false);
+                    setEditingUser(null);
+                }}
                 onSaved={refetch}
                 editingUser={editingUser}
             />
 
             <CityColorsDialog
                 open={cityColorsOpen}
-                onClose={() => setCityColorsOpen(false)}
+                onClose={async () => {
+                    setCityColorsOpen(false);
+                    await fetchCityColors(); // ensure UI reflects DB after closing
+                }}
                 cityColors={cityColors}
-                onSave={(newMap) => setCityColors(newMap || {})}
+                onSave={async (newMap) => {
+                    // Persist adds/edits; remove deletions
+                    const newEntries = Object.entries(newMap || {});
+                    const newKeys = new Set(
+                        newEntries.map(([k]) => norm(k))
+                    );
+
+                    // upserts
+                    for (const [city, hex] of newEntries) {
+                        await upsertCityColor(city, hex);
+                    }
+
+                    // deletions
+                    for (const oldCity of Object.keys(cityColors)) {
+                        if (!newKeys.has(norm(oldCity))) {
+                            await removeCityColor(oldCity);
+                        }
+                    }
+
+                    // local state for immediate UI, then hard refresh from DB
+                    setCityColors(newMap || {});
+                    await fetchCityColors();
+                }}
             />
 
             <DriversDialog
