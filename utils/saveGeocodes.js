@@ -1,13 +1,25 @@
 // utils/saveGeocodes.js
-export async function saveGeocodesBulk(updates = []) {
-    if (!updates.length) return;
+/**
+ * updates: Array<{ id: number, lat: number, lng: number }>
+ * returns: { results: Array<{ id, ok, reason? }> }
+ */
+export async function saveGeocodesBulk(updates) {
     const res = await fetch("/api/users/geo/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates }),
+        // IMPORTANT: send an array (not {items}) to match the API above
+        body: JSON.stringify(updates),
     });
+
     if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(t || "Failed saving geocodes");
+        // If the route was missing earlier, this used to be an HTML 404.
+        // Make the error readable:
+        const text = await res.text().catch(() => "");
+        let reason = `HTTP ${res.status}`;
+        try { reason = JSON.parse(text)?.error || reason; } catch {}
+        throw new Error(`saveGeocodesBulk failed: ${reason}`);
     }
+
+    const data = await res.json();
+    return { results: Array.isArray(data?.results) ? data.results : [] };
 }

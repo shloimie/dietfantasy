@@ -27,34 +27,28 @@ export default function UsersTable({
                                        onEdit,
                                        onDelete,
                                    }) {
+    // NEW: geocoded count
+    const geoCount = Array.isArray(users)
+        ? users.filter(u => (u.lat ?? u.latitude) != null && (u.lng ?? u.longitude) != null).length
+        : 0;
+
     return (
         <table border="1" cellPadding="6" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-
             <tr>
-
                 <th style={{ width: 50 }}>#</th>
                 {columns.map((c) => (
-                    // <th
-                    //     key={c.key}
-                    //     onClick={() => onSort(c.key)}
-                    //     style={{ cursor: "pointer" }}
-                    //     title="Click to sort"
-                    // >
-                    //     {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
-                    // </th>
-
                     <th
-                    key={c.key}
-                onClick={() => onSort && onSort(c.key)}
-                style={{ cursor: onSort ? "pointer" : "default" }}
-                title={onSort ? "Click to sort" : undefined}
-            >
-                {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
-            </th>
+                        key={c.key}
+                        onClick={() => onSort && onSort(c.key)}
+                        style={{ cursor: onSort ? "pointer" : "default" }}
+                        title={onSort ? "Click to sort" : undefined}
+                    >
+                        {c.label}{sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
+                    </th>
                 ))}
-
-            <th>GEO</th>
+                {/* NEW: show count in header */}
+                <th>GEO ({geoCount})</th>
                 <th>ACTIONS</th>
             </tr>
             </thead>
@@ -94,16 +88,11 @@ export default function UsersTable({
                                 .join(" ")
                             : ""}
                     </td>
-
                     <td title={u.lat != null && u.lng != null ? "Geocoded" : "Missing"}>
                         {u.lat != null && u.lng != null ? "✓" : "—"}
                     </td>
                     <td>
-                        <Button
-                            size="small"
-                            onClick={() => onEdit?.(u)}
-                            disabled={!onEdit}
-                        >
+                        <Button size="small" onClick={() => onEdit?.(u)} disabled={!onEdit}>
                             Edit
                         </Button>
                         <Button

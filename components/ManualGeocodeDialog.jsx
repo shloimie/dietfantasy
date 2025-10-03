@@ -4,9 +4,12 @@
 import * as React from "react";
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, Box, Typography, Stack, TextField, LinearProgress, Chip
+    Button, Box, Typography, Stack, TextField, LinearProgress, Chip, Collapse,
+    IconButton, List, ListItemButton, ListItemText
 } from "@mui/material";
-import { geocodeOneClient } from "../utils/geocodeOneClient";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import { geocodeOneClient, searchGeocodeCandidates } from "../utils/geocodeOneClient";
 import { geocodeMissingViaApi } from "../utils/geocodeMissingClient";
 import { buildGeocodeQuery } from "../utils/addressHelpers";
 import MapConfirmDialog from "./MapConfirmDialog";
@@ -16,7 +19,7 @@ import MapConfirmDialog from "./MapConfirmDialog";
  * - open
  * - onClose
  * - usersMissing: Array<{ id, first, last, address, apt?, city, state, zip }>
- * - onGeocoded: (updates: Array<{ id, lat, lng }>) => void  // should persist to DB
+ * - onGeocoded: (updates: Array<{ id, lat, lng }>) => Promise<void> | void
  */
 export default function ManualGeocodeDialog({
                                                 open,
@@ -31,9 +34,15 @@ export default function ManualGeocodeDialog({
         city: u.city || "",
         state: u.state || "",
         zip: u.zip || "",
-        status: "pending", // pending → geocoding → ok|error
+        status: "pending",       // pending → geocoding → ok|error
         lat: null,
         lng: null,
+        attemptCount: 0,         // prevent endless auto-retries
+        lastError: null,
+        logs: [],                // [{ ts, msg }]
+        showLog: false,
+        candidatesOpen: false,
+        candidates: [],
     }), []);
 
     const [rows, setRows] = React.useState(() => usersMissing.map(toRow));
@@ -43,6 +52,12 @@ export default function ManualGeocodeDialog({
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const [pickerRow, setPickerRow] = React.useState(null);
 
+
+    const [hintById, setHintById] = React.useState({}); // { [id]: { shownFor, queryUsed } }
+    // keep a stable snapshot to avoid effect loops
+    const rowsRef = React.useRef(rows);
+    React.useEffect(() => { rowsRef.current = rows; }, [rows]);
+
     React.useEffect(() => {
         if (!open) return;
         const next = usersMissing.map(toRow);
@@ -50,49 +65,84 @@ export default function ManualGeocodeDialog({
         setAutoDone(0);
     }, [open, usersMissing, toRow]);
 
-    const updateField = (id, field, value) =>
-        setRows(prev => prev.map(r => (r.id === id ? { ...r, [field]: value } : r)));
+    const updateRow = (id, patch) => {
+        setRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
+    };
+    const pushLog = (id, msg) => {
+        const ts = new Date().toLocaleTimeString();
+        setRows(prev => prev.map(r => (r.id === id ? { ...r, logs: [...r.logs, { ts, msg }] } : r)));
+    };
 
-    const persistOK = (id, lat, lng) => {
-        setRows(prev => prev.map(r => (r.id === id ? { ...r, status: "ok", lat, lng } : r)));
+    // --- SUCCESS HANDLER: remove row immediately after saving
+    const persistOK = async (id, lat, lng, label = "Resolved") => {
+        // optimistic UI
+        pushLog(id, label);
         setAutoDone(d => d + 1);
-        onGeocoded?.([{ id, lat, lng }]); // persist upstream
-    };
 
-    const markError = (id) => {
-        setRows(prev => prev.map(r => (r.id === id ? { ...r, status: "error" } : r)));
-    };
-
-    const geocodeRowAuto = async (row) => {
-        const strictQ = buildGeocodeQuery(row);
-        updateField(row.id, "status", "geocoding");
+        // persist upstream (DB)
         try {
-            const { lat, lng } = await geocodeOneClient(strictQ);
-            persistOK(row.id, lat, lng);
-            return true;
-        } catch {
-            // loose fallback: drop ZIP
-            const looseQ = [row.address, row.city, row.state].filter(Boolean).join(", ");
-            try {
-                const { lat, lng } = await geocodeOneClient(looseQ);
-                persistOK(row.id, lat, lng);
-                return true;
-            } catch {
-                markError(row.id);
-                return false;
-            }
+            await onGeocoded?.([{ id, lat, lng }]);
+        } catch (e) {
+            // if saving fails, keep the row for manual action and show error
+            pushLog(id, `DB save failed: ${e?.message || e}`);
+            updateRow(id, { status: "error", lastError: "DB save failed" });
+            return;
         }
+
+        // remove the row now so the list “moves on”
+        setRows(prev => prev.filter(r => r.id !== id));
     };
 
+    const markError = (id, errMsg) => {
+        const current = rowsRef.current.find(r => r.id === id);
+        const attempts = (current?.attemptCount ?? 0) + 1;
+        updateRow(id, { status: "error", lastError: errMsg, attemptCount: attempts });
+        pushLog(id, `❌ ${errMsg}`);
+    };
+
+    async function geocodeRowAuto(row, modeLabel = "Auto") {
+        // Only one auto attempt per open unless the user edits/clicks try
+        if (row.status === "error" && modeLabel === "Auto") return false;
+
+        const strictQ = buildGeocodeQuery(row);
+        updateRow(row.id, { status: "geocoding" });
+        pushLog(row.id, `🔎 ${modeLabel}: "${strictQ}"`);
+
+        try {
+            const { lat, lng, provider, formatted } = await geocodeOneClient(strictQ);
+            await persistOK(row.id, lat, lng, `✅ ${modeLabel} via ${provider}${formatted ? ` (${formatted})` : ""}`);
+            return true;
+        } catch (e1) {
+            // fallback (drop ZIP)
+            const looseQ = [row.address, row.city, row.state].filter(Boolean).join(", ");
+            pushLog(row.id, `↪ fallback: "${looseQ}"`);
+            try {
+                const { lat, lng, provider, formatted } = await geocodeOneClient(looseQ);
+                await persistOK(row.id, lat, lng, `✅ fallback via ${provider}${formatted ? ` (${formatted})` : ""}`);
+                return true;
+            } catch (e2) {
+            const msg = e2?.message || e1?.message || "No match";
+            markError(row.id, msg);
+            // NEW: auto-open suggestions on failure
+            fetchCandidates(row);
+            return false;
+        }
+        }
+    }
+
+    // stable auto-runner (reads snapshot, not the live state)
     const runAutoGeocoding = React.useCallback(async () => {
-        if (!open || rows.length === 0) return;
+        if (!open) return;
+        const snapshot = rowsRef.current;
+        if (!snapshot.length) return;
+
         setWorkingAuto(true);
 
-        // 1) bulk server-side (will write to DB for any successes)
+        // bulk server pass (best-effort)
         try {
-            const payload = rows.map(r => ({
+            const payload = snapshot.map(r => ({
                 id: r.id,
-                address: r.address, // apt/unit intentionally not included
+                address: r.address,
                 city: r.city, state: r.state, zip: r.zip,
             }));
             await geocodeMissingViaApi(payload);
@@ -100,59 +150,74 @@ export default function ManualGeocodeDialog({
             console.warn("Bulk auto geocode error (continuing):", e);
         }
 
-        // 2) per-row fallback for any still pending/error (best-effort against current list)
-        for (const row of rows) {
-            if (row.status === "ok") continue;
+        // per-row pass (once)
+        for (const row of snapshot) {
+            if (row.status === "ok" || row.status === "error") continue;
             // eslint-disable-next-line no-await-in-loop
-            await geocodeRowAuto(row);
+            await geocodeRowAuto(row, "Auto");
         }
 
-        // remove resolved rows; keep only those that still need manual
-        setRows(prev => prev.filter(r => r.status !== "ok"));
         setWorkingAuto(false);
-    }, [open, rows]);
+    }, [open]);
 
-    React.useEffect(() => {
-        if (!open) return;
-        runAutoGeocoding();
-    }, [open, runAutoGeocoding]);
+    // fire once when opening
+    React.useEffect(() => { if (open) runAutoGeocoding(); }, [open, runAutoGeocoding]);
 
-    const unresolvedCount = rows.filter(r => r.status !== "ok").length;
+    const unresolved = rows.length; // since we remove on success, remaining rows are unresolved
 
+    // Manual picker
     const openPickerFor = (row) => { setPickerRow(row); setPickerOpen(true); };
-    const onPickerConfirm = ({ lat, lng }) => {
-        if (pickerRow) persistOK(pickerRow.id, lat, lng);
+    const onPickerConfirm = async ({ lat, lng }) => {
+        if (pickerRow) await persistOK(pickerRow.id, lat, lng, "✅ manual map pick");
         setPickerOpen(false);
         setPickerRow(null);
-        // remove resolved from list
-        setRows(prev => prev.filter(r => r.id !== (pickerRow?.id)));
     };
-    const onPickerClose = () => { setPickerOpen(false); setPickerRow(null); };
 
+    // Candidate suggestions for ambiguous rows
+    async function fetchCandidates(row) {
+        const q = buildGeocodeQuery(row);
+        updateRow(row.id, { candidatesOpen: true, candidates: [] });
+        pushLog(row.id, `🧭 suggestions for "${q}"`);
+        try {
+            const res = await fetch(`/api/geocode/search?q=${encodeURIComponent(q)}&limit=8`, { cache: "no-store" });
+            const data = await res.json();
+            const items = Array.isArray(data?.items) ? data.items : [];
+            updateRow(row.id, { candidates: items });
+            setHintById(prev => ({ ...prev, [row.id]: { shownFor: q, queryUsed: data?.queryUsed || q } }));
+            if (!items.length) pushLog(row.id, "No suggestions.");
+        } catch (e) {
+            pushLog(row.id, `Suggestion lookup failed: ${e?.message || e}`);
+        }
+    }
+
+    async function pickCandidate(row, item) {
+        await persistOK(row.id, Number(item.lat), Number(item.lng), `✅ picked: ${item.label}`);
+    }
+
+    // User-driven single retry
     const geocodeOneNow = async (row) => {
-        await geocodeRowAuto(row);
-        setRows(prev => prev.filter(r => r.status !== "ok"));
+        await geocodeRowAuto(row, "Manual auto-try");
     };
 
     const geocodeAllUnresolvedNow = async () => {
         setWorkingAuto(true);
-        for (const r of rows) {
-            if (r.status === "ok") continue;
+        const snapshot = rowsRef.current;
+        for (const r of snapshot) {
             // eslint-disable-next-line no-await-in-loop
-            await geocodeRowAuto(r);
+            await geocodeRowAuto(r, "Manual auto-try all");
         }
-        setRows(prev => prev.filter(r => r.status !== "ok"));
         setWorkingAuto(false);
     };
+
+    // Toggle log accordion
+    const toggleLog = (row) => updateRow(row.id, { showLog: !row.showLog });
 
     return (
         <>
             <MapConfirmDialog
                 open={pickerOpen}
-                onClose={onPickerClose}
-                initialQuery={
-                    pickerRow ? buildGeocodeQuery(pickerRow) : ""
-                }
+                onClose={() => { setPickerOpen(false); setPickerRow(null); }}
+                initialQuery={pickerRow ? buildGeocodeQuery(pickerRow) : ""}
                 onConfirm={onPickerConfirm}
             />
 
@@ -168,14 +233,14 @@ export default function ManualGeocodeDialog({
 
                     <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }} flexWrap="wrap">
                         <Chip label={`Auto completed: ${autoDone}`} color={autoDone ? "success" : "default"} size="small" />
-                        <Chip label={`Need manual: ${unresolvedCount}`} color={unresolvedCount ? "warning" : "default"} size="small" />
+                        <Chip label={`Need manual: ${unresolved}`} color={unresolved ? "warning" : "default"} size="small" />
                         <Box sx={{ flex: 1 }} />
                         <Button size="small" variant="outlined" onClick={runAutoGeocoding} disabled={workingAuto}>
                             Retry auto
                         </Button>
                     </Stack>
 
-                    {unresolvedCount === 0 ? (
+                    {unresolved === 0 ? (
                         <Typography variant="body2" sx={{ opacity: 0.8 }}>
                             🎉 All users were geocoded automatically.
                         </Typography>
@@ -186,31 +251,73 @@ export default function ManualGeocodeDialog({
                                     <Typography variant="subtitle2" sx={{ mb: 1 }}>
                                         {r.name} — ID #{r.id}
                                     </Typography>
+
                                     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                        <TextField
-                                            size="small"
-                                            label="Street (no unit)"
-                                            value={r.address}
-                                            onChange={(e) => updateField(r.id, "address", e.target.value)}
-                                            fullWidth
-                                        />
-                                        <TextField size="small" label="City" value={r.city} onChange={(e) => updateField(r.id, "city", e.target.value)} />
-                                        <TextField size="small" label="State" value={r.state} onChange={(e) => updateField(r.id, "state", e.target.value)} sx={{ width: 90 }} />
-                                        <TextField size="small" label="ZIP" value={r.zip} onChange={(e) => updateField(r.id, "zip", e.target.value)} sx={{ width: 120 }} />
+                                        <TextField size="small" label="Street (no unit)" value={r.address}
+                                                   onChange={(e) => updateRow(r.id, { address: e.target.value, status: "pending" })} fullWidth />
+                                        <TextField size="small" label="City" value={r.city}
+                                                   onChange={(e) => updateRow(r.id, { city: e.target.value, status: "pending" })} />
+                                        <TextField size="small" label="State" value={r.state}
+                                                   onChange={(e) => updateRow(r.id, { state: e.target.value, status: "pending" })} sx={{ width: 90 }} />
+                                        <TextField size="small" label="ZIP" value={r.zip}
+                                                   onChange={(e) => updateRow(r.id, { zip: e.target.value, status: "pending" })} sx={{ width: 120 }} />
                                     </Stack>
-                                    <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center">
+
+                                    <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center" flexWrap="wrap">
                                         <Button size="small" variant="outlined" onClick={() => geocodeOneNow(r)} disabled={workingAuto}>
                                             Auto-try again
                                         </Button>
                                         <Button size="small" variant="outlined" onClick={() => openPickerFor(r)} disabled={workingAuto}>
                                             Select on map
                                         </Button>
-                                        <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                        <Button size="small" onClick={() => fetchCandidates(r)} disabled={workingAuto}>
+                                            See suggestions
+                                        </Button>
+
+                                        <IconButton size="small" onClick={() => toggleLog(r)} title="Show log" sx={{ ml: "auto" }}>
+                                            {r.showLog ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                                        </IconButton>
+                                        <Typography variant="caption" sx={{ ml: 0.5, opacity: 0.7 }}>
                                             {r.status === "pending" && "Needs geocode"}
                                             {r.status === "geocoding" && "Looking up…"}
-                                            {r.status === "error" && "No match yet — try map"}
+                                            {r.status === "error" && (r.lastError ? `Error: ${r.lastError}` : "No match")}
                                         </Typography>
                                     </Stack>
+
+                                    {/* Suggestions list */}
+                                    <Collapse in={r.candidatesOpen} unmountOnExit>
+                                        <Box sx={{ mt: 1, border: "1px dashed #ccc", borderRadius: 1, maxHeight: 200, overflow: "auto" }}>
+                                            {r.candidates?.length ? (
+                                                <List dense>
+                                                    {r.candidates.map((c, idx) => (
+                                                        <ListItemButton key={idx} onClick={() => pickCandidate(r, c)}>
+                                                            <ListItemText primary={c.label}
+                                                                          secondary={`${Number(c.lat).toFixed(5)}, ${Number(c.lng).toFixed(5)}`} />
+                                                        </ListItemButton>
+                                                    ))}
+                                                </List>
+                                            ) : (
+                                                <Typography variant="caption" sx={{ p: 1, display: "block", opacity: 0.75 }}>
+                                                    No suggestions yet.
+                                                </Typography>
+                                            )}
+                                        </Box>
+                                    </Collapse>
+
+                                    {/* Log accordion */}
+                                    <Collapse in={r.showLog} unmountOnExit>
+                                        <Box sx={{ mt: 1, p: 1, borderRadius: 1, background: "#fafafa", border: "1px solid #eee" }}>
+                                            {r.logs.length ? r.logs.map((L, i) => (
+                                                <Typography key={i} variant="caption" sx={{ display: "block" }}>
+                                                    [{L.ts}] {L.msg}
+                                                </Typography>
+                                            )) : (
+                                                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                                    No log entries yet.
+                                                </Typography>
+                                            )}
+                                        </Box>
+                                    </Collapse>
                                 </Box>
                             ))}
                         </Stack>
@@ -218,7 +325,7 @@ export default function ManualGeocodeDialog({
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={onClose}>Done</Button>
-                    <Button onClick={geocodeAllUnresolvedNow} variant="contained" disabled={workingAuto || unresolvedCount === 0}>
+                    <Button onClick={geocodeAllUnresolvedNow} variant="contained" disabled={workingAuto || unresolved === 0}>
                         Auto-try all unresolved
                     </Button>
                 </DialogActions>
