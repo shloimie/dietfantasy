@@ -1,4 +1,3 @@
-// app/(mobile)/drivers/[id]/page.jsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,26 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { fetchDriver, fetchStops, setStopCompleted } from "../../../../lib/api";
 import { mapsUrlFromAddress } from "../../../../lib/maps";
 import { mergeStopsWithLocal, addCompleted } from "../../../../lib/localProgress";
+import { CheckCircle2, MapPin, Phone, Clock, Hash, ArrowLeft, Link as LinkIcon, X } from "lucide-react";
 import SearchStops from "../../../../components/SearchStops";
-import {
-    CheckCircle2,
-    MapPin,
-    Phone,
-    Clock,
-    Hash,
-    ArrowLeft,
-    Link as LinkIcon,
-    X,
-} from "lucide-react";
 
 /** Invisible helper that listens for postMessage from the sign iframe */
 function InlineMessageListener({ onDone }) {
     useEffect(() => {
         const handler = async (e) => {
             if (!e?.data || e.data.type !== "signatures:done") return;
-            try {
-                await onDone?.();
-            } catch {}
+            try { await onDone?.(); } catch {}
         };
         window.addEventListener("message", handler);
         return () => window.removeEventListener("message", handler);
@@ -54,7 +42,6 @@ export default function DriverDetailPage() {
         let active = true;
         (async () => {
             try {
-                // Always fetch fresh on mount
                 const d = await fetchDriver(id);
                 const every = await fetchStops(); // /api/mobile/stops injects sigCollected
                 if (!active) return;
@@ -71,9 +58,7 @@ export default function DriverDetailPage() {
                 if (active) setLoading(false);
             }
         })();
-        return () => {
-            active = false;
-        };
+        return () => { active = false; };
     }, [id]);
 
     function selectStopsForRoute(route, all, routeKey) {
@@ -82,7 +67,6 @@ export default function DriverDetailPage() {
             .map((sid) => byId.get(String(sid)))
             .filter(Boolean)
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        // Keep local optimistic completion merge only
         return mergeStopsWithLocal(routeKey, selected);
     }
 
@@ -106,7 +90,6 @@ export default function DriverDetailPage() {
     const closeSheet = async () => {
         setSheetOpen(false);
         setSheetToken(null);
-        // refresh after collecting signatures so sigCollected is fresh
         try {
             const freshAll = await fetchStops();
             const merged = selectStopsForRoute(driver, freshAll, id);
@@ -116,26 +99,41 @@ export default function DriverDetailPage() {
     };
 
     if (loading || !driver) {
-        return <div className="muted" style={{ padding: 20 }}>Loading route…</div>;
+        return <div className="muted" style={{ padding: 16 }}>Loading route…</div>;
     }
 
     return (
         <div className="container theme" style={{ ["--brand"]: driver.color || "#3665F3" }}>
-            {/* Back */}
-            <div style={{ marginBottom: 16 }}>
+            {/* Sticky mobile header */}
+            <header className="sticky-header">
                 <button
-                    className="btn btn-outline"
+                    className="icon-back"
                     onClick={() => router.push("/drivers")}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+                    aria-label="Back to routes"
                 >
-                    <ArrowLeft style={{ height: 16, width: 16 }} />
-                    Back
+                    <ArrowLeft />
                 </button>
-            </div>
+                <div className="hdr-center">
+                    <div className="hdr-top">
+                        <div className="hdr-pill"><Hash /></div>
+                        <div className="hdr-txt">
+                            <div className="title">Route {driver.routeNumber}</div>
+                            <div className="sub">{driver.name}</div>
+                        </div>
+                    </div>
+                    <div className="progress small">
+                        <span style={{ width: `${pct}%` }} />
+                    </div>
+                </div>
+                <div className="hdr-count">
+                    <div className="strong">{doneCount}/{stops.length}</div>
+                    <div className="muted tiny">Done</div>
+                </div>
+            </header>
 
-            {/* Banner */}
+            {/* Desktop banner (hidden on small) */}
             <div
-                className="card banner"
+                className="card banner desktop-only"
                 style={{
                     background: `linear-gradient(0deg, ${driver.color || "#3665F3"}, ${driver.color || "#3665F3"})`,
                     color: "#fff",
@@ -148,29 +146,18 @@ export default function DriverDetailPage() {
                                 <Hash />
                             </div>
                             <div>
-                                <h1 className="h1" style={{ color: "#fff" }}>
-                                    Route {driver.routeNumber}
-                                </h1>
-                                <small> {driver.name} </small>
+                                <h1 className="h1" style={{ color: "#fff" }}>Route {driver.routeNumber}</h1>
+                                <small>{driver.name}</small>
                             </div>
                         </div>
                         <div style={{ textAlign: "right" }}>
-                            <div style={{ fontSize: 28, fontWeight: 800 }}>
-                                {doneCount}/{stops.length}
-                            </div>
-                            <div style={{ opacity: 0.85 }}>Completed</div>
+                            <div className="xxl">{doneCount}/{stops.length}</div>
+                            <div className="muted white">Completed</div>
                         </div>
                     </div>
 
-                    <div
-                        style={{
-                            marginTop: 16,
-                            background: "rgba(255,255,255,.15)",
-                            borderRadius: 12,
-                            padding: 16,
-                        }}
-                    >
-                        <div style={{ opacity: 0.9, marginBottom: 8, fontSize: 14 }}>Progress</div>
+                    <div className="banner-progress">
+                        <div className="muted white mb8">Progress</div>
                         <div className="progress">
                             <span style={{ width: `${pct}%`, background: "#fff" }} />
                         </div>
@@ -188,139 +175,88 @@ export default function DriverDetailPage() {
                 {stops.map((s, idx) => {
                     const done = !!s.completed;
                     const sigs = s.sigCollected ?? 0;
-                    const sigDone = sigs >= 5; // ONLY affects the Signatures button
+                    const sigDone = sigs >= 5;
                     const isLoading = completingId === s.id;
 
                     const mapsUrl = mapsUrlFromAddress({
-                        address: s.address,
-                        city: s.city,
-                        state: s.state,
-                        zip: s.zip,
+                        address: s.address, city: s.city, state: s.state, zip: s.zip,
                     });
 
-                    // Mark Complete button states (independent from signatures)
+                    // Mark Complete states
                     let completeLabel = "Mark Complete";
                     let completeClass = "btn btn-outline";
                     let completeDisabled = false;
 
-                    if (done) {
-                        completeLabel = "Completed";
-                        completeClass = "btn btn-outline btn-muted";
-                        completeDisabled = true;
-                    } else if (isLoading) {
-                        completeLabel = "Saving…";
-                        completeClass = "btn btn-outline btn-loading";
-                        completeDisabled = true;
-                    }
+                    if (done) { completeLabel = "Completed"; completeClass = "btn btn-outline btn-muted"; completeDisabled = true; }
+                    else if (isLoading) { completeLabel = "Saving…"; completeClass = "btn btn-outline btn-loading"; completeDisabled = true; }
 
-                    // Signatures button states (disabled if 5/5)
+                    // Signatures states
                     const sigBtnDisabled = sigDone;
                     const sigBtnClass = sigDone ? "btn btn-success btn-disabled" : "btn btn-outline";
                     const sigBtnLabel = sigDone ? "Signatures Complete" : "Collect Signatures";
 
                     return (
-                        <div
-                            key={s.id}
-                            id={`stop-${s.id}`}
-                            className={`card stop-card ${done ? "done-bg" : ""}`}
-                        >
+                        <div key={s.id} id={`stop-${s.id}`} className={`card stop-card ${done ? "done-bg" : ""}`}>
                             <div className="color-rail" style={{ background: "var(--brand)" }} />
                             <div className="card-content">
-                                <div className="row" style={{ alignItems: "flex-start" }}>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div className="flex" style={{ gap: 10, alignItems: "center" }}>
-                                            {done ? (
-                                                <CheckCircle2 color="var(--success)" />
-                                            ) : (
-                                                <span className="pill">{idx + 1}</span>
-                                            )}
-                                            <h2
-                                                className="bold"
-                                                style={{
-                                                    fontSize: 18,
-                                                    whiteSpace: "nowrap",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                }}
-                                            >
-                                                {s.name}
-                                            </h2>
-
-                                            {/* Signature count chip (display only) */}
-                                            <span
-                                                className="muted"
-                                                style={{
-                                                    fontSize: 12,
-                                                    padding: "2px 8px",
-                                                    border: "1px solid #e5e7eb",
-                                                    borderRadius: 12,
-                                                    background: "#f8fafc",
-                                                }}
-                                                title="Collected signatures for this customer"
-                                            >
-                        {sigs}/5 sigs
-                      </span>
-
-                                            {done && <span className="muted" style={{ fontSize: 14 }}>Done</span>}
+                                <div className="row top">
+                                    <div className="main">
+                                        <div className="flex head">
+                                            {done ? <CheckCircle2 color="var(--success)" /> : <span className="pill">{idx + 1}</span>}
+                                            <h2 className="title2" title={s.name}>{s.name}</h2>
+                                            <span className="chip" title="Collected signatures for this customer">{sigs}/5 sigs</span>
+                                            {done && <span className="muted d14">Done</span>}
                                         </div>
 
                                         <div className="kv">
-                                            <div className="flex muted">
-                                                <MapPin style={{ height: 16, width: 16 }} />
-                                                <span>
-                          {s.address}, {s.city}, {s.state} {s.zip}
-                        </span>
+                                            <div className="address-line">
+                                                <MapPin className="i16" />
+                                                <span className="addr-text"> {s.address}, {s.city}, {s.state} {s.zip}</span>
                                             </div>
+
                                             {s.phone && (
-                                                <div className="flex muted">
-                                                    <Phone style={{ height: 16, width: 16 }} />
-                                                    <a className="link" href={`tel:${s.phone}`}>
-                                                        {s.phone}
-                                                    </a>
+                                                <div className="flex muted wrap">
+                                                    <Phone className="i16" />
+                                                    <a className="link" href={`tel:${s.phone}`}>{s.phone}</a>
                                                 </div>
                                             )}
                                             {s.dislikes && (
-                                                <div className="flex muted">
-                                                    <span style={{ fontWeight: 600 }}>Dislikes:</span>
+                                                <div className="flex muted wrap">
+                                                    <span className="b600">Dislikes:</span>
                                                     <span>{s.dislikes}</span>
                                                 </div>
                                             )}
                                             {done && (
-                                                <div className="flex muted">
-                                                    <Clock style={{ height: 16, width: 16 }} />
+                                                <div className="flex muted wrap">
+                                                    <Clock className="i16" />
                                                     <span>Completed</span>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
 
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                        <a className="btn btn-outline" href={mapsUrl} target="_blank" rel="noreferrer">
+                                    {/* Actions – mobile: stacked full width; desktop: column */}
+                                    <div className="mobile-actions">
+                                        <a className="btn btn-primary block" href={mapsUrl} target="_blank" rel="noreferrer">
                                             Open in Maps
                                         </a>
 
-                                        {/* Signatures bottom sheet (disabled if 5/5) */}
                                         <button
-                                            className={sigBtnClass}
+                                            className={`${sigBtnClass} block`}
                                             onClick={() => {
                                                 if (sigBtnDisabled) return;
-                                                if (!s.signToken) {
-                                                    // silent per your preference (no alerts)
-                                                    return;
-                                                }
+                                                if (!s.signToken) return;
                                                 openSheet(s.signToken, s.name || "Sign");
                                             }}
                                             disabled={sigBtnDisabled}
-                                            style={{ width: 180, display: "inline-flex", alignItems: "center", gap: 8 }}
                                             title={sigDone ? "All signatures collected" : "Open the public signature page"}
                                         >
                                             <LinkIcon style={{ height: 16, width: 16 }} />
                                             {sigBtnLabel}
                                         </button>
 
-                                        {/* Mark Complete (manual only) */}
                                         <button
-                                            className={completeClass}
+                                            className={`${completeClass} block`}
                                             onClick={async () => {
                                                 if (completeDisabled) return;
                                                 try {
@@ -328,20 +264,13 @@ export default function DriverDetailPage() {
                                                     const res = await setStopCompleted(s.userId, s.id, true);
                                                     if (res?.ok && res?.stop?.completed) {
                                                         addCompleted(id, s.id);
-                                                        setStops((prev) =>
-                                                            prev.map((x) => (x.id === s.id ? { ...x, completed: true } : x))
+                                                        setStops(prev =>
+                                                            prev.map(x => (x.id === s.id ? { ...x, completed: true } : x))
                                                         );
-                                                    } else {
-                                                        // silent per your preference
                                                     }
-                                                } catch {
-                                                    // silent per your preference
-                                                } finally {
-                                                    setCompletingId(null);
-                                                }
+                                                } catch {} finally { setCompletingId(null); }
                                             }}
                                             disabled={completeDisabled}
-                                            style={{ width: 180 }}
                                             title={done ? "Completed" : "Mark this stop as completed"}
                                         >
                                             {completeLabel}
@@ -361,9 +290,7 @@ export default function DriverDetailPage() {
                     <div className="sheet-panel">
                         <div className="sheet-header">
                             <div className="sheet-title">{sheetTitle}</div>
-                            <button className="icon-btn" onClick={closeSheet} aria-label="Close">
-                                <X />
-                            </button>
+                            <button className="icon-btn" onClick={closeSheet} aria-label="Close"><X /></button>
                         </div>
                         {sheetToken && (
                             <iframe
@@ -378,69 +305,150 @@ export default function DriverDetailPage() {
             )}
 
             {/* Listen for "signatures:done" and auto-close + refresh */}
-            {typeof window !== "undefined" && (
-                <InlineMessageListener onDone={closeSheet} />
-            )}
+            {typeof window !== "undefined" && <InlineMessageListener onDone={closeSheet} />}
 
             {/* Page-scoped CSS */}
             <style
                 dangerouslySetInnerHTML={{
                     __html: `
-          :root{
-            --bg:#eef2f7; --border:#e5e7eb; --muted:#6b7280; --radius:14px;
-            --shadow:0 8px 22px rgba(16,24,40,.06), 0 2px 8px rgba(16,24,40,.04);
-            --success:#16a34a;
-          }
-          *{box-sizing:border-box}
-          html,body{margin:0;padding:0;background:var(--bg);color:#111;
-            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial}
-          .container{max-width:900px;margin:32px auto;padding:0 20px}
-          .card{position:relative;border:1px solid var(--border);background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-          .card-content{padding:18px 20px}
-          .color-rail{position:absolute;left:0;top:0;bottom:0;width:6px;border-top-left-radius:var(--radius);border-bottom-left-radius:var(--radius)}
-          .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
-          .flex{display:flex;align-items:center;gap:8px}
-          .grid{display:grid;gap:20px}
-          .h1{font-size:28px;font-weight:800;margin:0}
-          .bold{font-weight:800}
-          .muted{color:var(--muted)}
-          .hdr-badge{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#e7eefc;color:#2748d8;
-            box-shadow:inset 0 0 0 1px rgba(39,72,216,.12)}
-          .btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;border-radius:10px;border:1px solid var(--border);background:#111;color:#fff;cursor:pointer;user-select:none;position:relative}
-          .btn-outline{background:#fff;color:#111;border-color:var(--border)}
-          .btn-muted{background:#f3f4f6;color:#6b7280;cursor:default}
-          .btn-success{background:#16a34a;color:#fff;border-color:#16a34a;cursor:default}
-          .btn-disabled{opacity:.9;cursor:not-allowed}
-          .btn-loading{opacity:.85;cursor:wait}
-          .btn-loading::after{
-            content:""; position:absolute; right:10px; width:14px; height:14px; border-radius:50%;
-            border:2px solid currentColor; border-top-color: transparent; animation: spin .7s linear infinite;
-          }
-          @keyframes spin{to{transform:rotate(360deg)}}
+:root{
+  --bg:#f7f8fb; --border:#e8eaef; --muted:#6b7280; --radius:14px;
+  --shadow:0 6px 18px rgba(16,24,40,.06), 0 1px 6px rgba(16,24,40,.05);
+  --success:#16a34a;
+  --tap: rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:#111;
+  -webkit-tap-highlight-color: transparent;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial}
+.container{max-width:960px;margin:0 auto;padding:12px 12px calc(12px + env(safe-area-inset-bottom));}
 
-          .progress{width:100%;height:10px;border-radius:999px;background:#f1f5f9;overflow:hidden}
-          .progress>span{display:block;height:100%;border-radius:999px;transition:width .25s ease}
-          .pill{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;
-            background:#fff;color:var(--brand);border:2px solid var(--brand);font-weight:700;font-size:14px;flex-shrink:0}
-          .kv{display:grid;gap:6px;margin-top:8px}
-          .link{color:#1d4ed8;text-decoration:none}
-          .link:hover{text-decoration:underline}
-          .banner small{opacity:.9}
-          .search-wrap{margin:16px 0}
-          .done-bg{ background:#ECFDF5; }
+/* Sticky compact header for phones */
+.sticky-header{
+  position: sticky; top: 0; z-index: 50; display:flex; align-items:center; gap:10px;
+  background: #fff; border-bottom:1px solid var(--border); padding:10px 12px;
+}
+.icon-back{
+  display:inline-grid; place-items:center; width:40px; height:40px; border-radius:10px;
+  border:1px solid var(--border); background:#fff; cursor:pointer;
+}
+.icon-back svg{width:20px;height:20px}
+.hdr-center{flex:1; min-width:0}
+.hdr-top{display:flex; align-items:center; gap:10px}
+.hdr-pill{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#e7eefc;color:var(--brand);box-shadow:inset 0 0 0 1px rgba(39,72,216,.12)}
+.hdr-txt .title{font-weight:800; font-size:16px; line-height:1.1}
+.hdr-txt .sub{font-size:12px; color:var(--muted)}
+.hdr-count{min-width:60px; text-align:right}
+.hdr-count .strong{font-weight:800}
+.tiny{font-size:11px}
+.progress{width:100%;height:8px;border-radius:999px;background:#f1f5f9;overflow:hidden}
+.progress.small{height:6px}
+.progress>span{display:block;height:100%;border-radius:999px;background:var(--brand);transition:width .25s ease}
 
-          /* Bottom sheet */
-          .sheet{position:fixed;inset:0;z-index:1000;display:grid}
-          .sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
-          .sheet-panel{
-            position:absolute;left:0;right:0;bottom:0;
-            height:80vh;max-height:720px;background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
-            box-shadow:0 -10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;
-          }
-          .sheet-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee}
-          .sheet-title{font-weight:700}
-          .icon-btn{border:1px solid #e5e7eb;background:#fff;border-radius:8px;padding:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
-          .sheet-frame{border:0;width:100%;height:100%;border-bottom-left-radius:16px;border-bottom-right-radius:16px}
+/* Desktop banner hides on small */
+.desktop-only{display:none}
+@media (min-width: 780px){
+  .desktop-only{display:block}
+  .sticky-header{display:none}
+  .container{padding:24px}
+}
+
+/* Cards */
+.card{position:relative;border:1px solid var(--border);background:#fff;border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+.card-content{padding:14px}
+.color-rail{position:absolute;left:0;top:0;bottom:0;width:6px;border-top-left-radius:18px;border-bottom-left-radius:18px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.row.top{align-items:flex-start}
+.flex{display:flex;align-items:center;gap:8px}
+.grid{display:grid;gap:12px}
+.h1{font-size:28px;font-weight:800;margin:0}
+.bold{font-weight:800}
+.muted{color:var(--muted)}
+.hdr-badge{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#e7eefc;color:#2748d8;box-shadow:inset 0 0 0 1px rgba(39,72,216,.12)}
+.banner .xxl{font-size:28px;font-weight:800}
+.white{color:#fff}
+.mb8{margin-bottom:8px}
+.banner-progress{margin-top:16px;background:rgba(255,255,255,.15);border-radius:12px;padding:16px}
+
+.pill{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;
+  background:#fff;color:var(--brand);border:2px solid var(--brand);font-weight:700;font-size:14px;flex-shrink:0}
+.kv{display:grid;gap:6px;margin-top:8px}
+.link{color:#1d4ed8;text-decoration:none}
+.link:hover{text-decoration:underline}
+.title2{font-weight:800; font-size:17px; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.d14{font-size:14px}
+.wrap{flex-wrap:wrap}
+.i16{width:16px;height:16px}
+.b600{font-weight:600}
+.chip{font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}
+.done-bg{ background:#ECFDF5; }
+
+/* Buttons */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:#111; color:#fff;
+  cursor:pointer; user-select:none; position:relative; touch-action:manipulation;
+}
+.btn:active{transform:translateY(1px); background: #0f0f0f;}
+.btn.block{width:100%}
+.btn-primary{background:var(--brand); border-color:var(--brand)}
+.btn-outline{background:#fff;color:#111;border-color:var(--border)}
+.btn-muted{background:#f3f4f6;color:#6b7280;cursor:default}
+.btn-success{background:#16a34a;color:#fff;border-color:#16a34a;cursor:default}
+.btn-disabled{opacity:.9;cursor:not-allowed}
+.btn-loading{opacity:.85;cursor:wait}
+.btn-loading::after{
+  content:""; position:absolute; right:12px; width:16px; height:16px; border-radius:50%;
+  border:2px solid currentColor; border-top-color: transparent; animation: spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Actions layout */
+.mobile-actions{display:grid; gap:8px; width:100%; max-width:520px}
+@media (min-width: 780px){
+  .mobile-actions{display:flex; flex-direction:column; width:auto; min-width:180px}
+}
+
+/* Search spacing */
+.search-wrap{margin:10px 0 14px}
+
+/* Bottom sheet */
+.sheet{position:fixed;inset:0;z-index:1000;display:grid}
+.sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.sheet-panel{
+  position:absolute;left:0;right:0;bottom:0;
+  height:92vh;max-height:760px;background:#fff;border-top-left-radius:18px;border-top-right-radius:18px;
+  box-shadow:0 -10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;
+}
+.sheet-header{display:flex;align-items:center;justify-content:space-between;padding:12px;border-bottom:1px solid #eee}
+.sheet-title{font-weight:700}
+.icon-btn{border:1px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.sheet-frame{border:0;width:100%;height:100%;border-bottom-left-radius:18px;border-bottom-right-radius:18px}
+        /* --- mobile overflow fix --- */
+.stop-card{ overflow:hidden; }
+
+@media (max-width: 780px){
+  /* stack content + actions vertically on phones */
+  .row.top{ 
+    flex-direction: column; 
+    align-items: stretch; 
+  }
+
+  /* make the action group full-width and grid */
+  .mobile-actions{
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    width: 100%;
+  }
+
+  /* ensure buttons expand to card width */
+  .btn.block{ width: 100%; }
+
+  /* avoid any accidental extra right space */
+  .card-content{ padding-right: 14px; }
+  .title2{ max-width: 100%; }
+}
         `,
                 }}
             />
