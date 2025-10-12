@@ -13,7 +13,6 @@ const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: fa
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
 
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
-import { MIN_PER_MILE, MIN_PER_STOP } from "../utils/routing";
 
 const palette = [
     "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
@@ -233,7 +232,7 @@ export default function DriversDialog({
                                 <Box sx={{ mt: 2 }}>
                                     <LinearProgress sx={{ width: 260 }} />
                                     <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 0.5, opacity: 0.8 }}>
-                                        Loading…  Time weights: {MIN_PER_MILE} min/mi, {MIN_PER_STOP} min/stop.
+                                        Loading…
                                     </Typography>
                                 </Box>
                             </Box>

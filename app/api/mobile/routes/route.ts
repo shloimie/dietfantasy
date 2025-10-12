@@ -13,25 +13,42 @@ type StopLite = Pick<Stop, "id" | "completed">;
  * - id, name, color
  * - stopIds (existing only)
  * - totalStops, completedStops
+ *
+ * Supports ?day=<monday|tuesday|...|all>
+ * When a specific day is requested, we also include drivers with day="all"
+ * so generation done with day="all" still powers the mobile view.
  */
-export async function GET() {
+export async function GET(req: Request) {
     const t0 = Date.now();
     console.log("[mobile/routes] GET start");
 
     try {
-        // 1) All drivers (add day filter here if you later need it)
+        const { searchParams } = new URL(req.url);
+        const dayParam = (searchParams.get("day") ?? "all").toLowerCase();
+
+        // 1) Fetch drivers (include day="all" when a specific day is requested)
+        const where =
+            dayParam === "all"
+                ? {}
+                : {
+                    OR: [{ day: dayParam }, { day: "all" }],
+                } as const;
+
         const drivers = await prisma.driver.findMany({
+            where,
             orderBy: { id: "asc" },
             select: { id: true, name: true, color: true, stopIds: true },
         });
-        console.log("[mobile/routes] drivers:", drivers.length);
+        console.log("[mobile/routes] drivers:", drivers.length, "day:", dayParam);
 
         // 2) Collect unique stopIds
         const allStopIds = Array.from(
             new Set(
                 drivers.flatMap((d) =>
                     Array.isArray(d.stopIds)
-                        ? d.stopIds.map((n) => Number(n)).filter(Number.isFinite)
+                        ? (d.stopIds as unknown[])
+                            .map((n) => Number(n))
+                            .filter(Number.isFinite)
                         : []
                 )
             )
@@ -39,20 +56,19 @@ export async function GET() {
         console.log("[mobile/routes] unique stopIds:", allStopIds.length);
 
         // 3) Load minimal stop info to compute progress
-        const stops = allStopIds.length
-            ? await prisma.stop.findMany({
+        const stops: StopLite[] = allStopIds.length
+            ? ((await prisma.stop.findMany({
                 where: { id: { in: allStopIds } },
                 select: { id: true, completed: true },
-            })
+            })) as StopLite[])
             : [];
 
-        // Typed map so `get()` returns StopLite | undefined (not unknown)
         const stopById = new Map<number, StopLite>();
-        for (const s of stops as StopLite[]) stopById.set(s.id, s);
+        for (const s of stops) stopById.set(s.id, s);
 
         // 4) Shape per driver
         const shaped = drivers.map((d) => {
-            const rawIds = Array.isArray(d.stopIds) ? d.stopIds : [];
+            const rawIds = Array.isArray(d.stopIds) ? (d.stopIds as unknown[]) : [];
             const filteredIds = rawIds
                 .map((n) => Number(n))
                 .filter((n) => Number.isFinite(n) && stopById.has(n));
@@ -74,14 +90,18 @@ export async function GET() {
             };
         });
 
+        // 5) Hide drivers with no stops so mobile only shows live routes
+        const activeOnly = shaped.filter((r) => r.totalStops > 0);
+
         console.log(
-            "[mobile/routes] shaped:",
-            shaped.length,
+            "[mobile/routes] shaped(active):",
+            activeOnly.length,
             "in",
             Date.now() - t0,
             "ms"
         );
-        return NextResponse.json(shaped, {
+
+        return NextResponse.json(activeOnly, {
             headers: { "Cache-Control": "no-store" },
         });
     } catch (e) {
