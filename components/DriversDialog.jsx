@@ -6,6 +6,7 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions,
     Button, Box, Typography, LinearProgress
 } from "@mui/material";
+import Link from "next/link";
 
 import dynamic from "next/dynamic";
 const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: false });
@@ -163,14 +164,13 @@ export default function DriversDialog({
         });
     }, [routes]);
 
-    // Build the inputs expected by exportRouteLabelsPDF:
     // 1) routeStops: Array<Array<UserLike>>
     const routeStops = React.useMemo(
         () => routes.map(r => (r.stops || [])),
         [routes]
     );
 
-    // 2) driverColors: one color per driver, aligned with routes
+    // 2) driverColors
     const driverColors = React.useMemo(
         () => routes.map((r, i) => r.color || palette[i % palette.length]),
         [routes]
@@ -186,6 +186,79 @@ export default function DriversDialog({
         const ampm = h >= 12 ? "PM" : "AM";
         h = h % 12 || 12;
         return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
+    }
+
+    /** Regenerate routes (red button) */
+    async function regenerateRoutes() {
+        const countStr = window.prompt("How many drivers for the new route?", String(driverCount));
+        if (countStr == null) return;
+        const count = Number(countStr);
+        if (!Number.isFinite(count) || count <= 0) { alert("Enter a valid number."); return; }
+        setDriverCount(count);
+        const ok = window.confirm(`Regenerate routes for "${selectedDay}" with ${count} drivers?`);
+        if (!ok) return;
+        try {
+            setBusy(true);
+            const res = await fetch("/api/route/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ day: selectedDay, driverCount: count }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            await loadRoutes();
+        } catch (e) {
+            console.error(e); alert("Failed to regenerate.");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    /** Reset all drivers' routes (confirm) */
+    async function resetAllRoutes() {
+        if (!routes.length) return;
+        const ok = window.confirm(`Reset ALL routes for "${selectedDay}"? This will clear completed flags.`);
+        if (!ok) return;
+
+        const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
+        setBusy(true);
+        try {
+            await Promise.all(driverIds.map(id =>
+                fetch("/api/route/reset", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ driverId: id, day: selectedDay, clearProof: false }),
+                })
+            ));
+            await loadRoutes();
+        } catch (e) {
+            console.error(e);
+            alert("Failed to reset routes.");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    /** Optimize order for all drivers */
+    async function optimizeAllRoutes() {
+        if (!routes.length) return;
+
+        const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
+        setBusy(true);
+        try {
+            await Promise.all(driverIds.map(id =>
+                fetch("/api/route/optimize", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ driverId: id, day: selectedDay }),
+                })
+            ));
+            await loadRoutes();
+        } catch (e) {
+            console.error(e);
+            alert("Failed to optimize routes.");
+        } finally {
+            setBusy(false);
+        }
     }
 
     return (
@@ -204,11 +277,41 @@ export default function DriversDialog({
                 fullWidth
                 PaperProps={{ style: { height: "80vh", position: "relative" } }}
             >
-                <DialogTitle>
-                    Stops Map
-                    <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.7 }}>
-            • Unrouted: {unrouted?.length ?? 0}
-          </span>
+                {/* Header with centered red button and top-right link */}
+                <DialogTitle sx={{ pb: 1 }}>
+                    <Box
+                        sx={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr auto 1fr",
+                            alignItems: "center",
+                            gap: 1,
+                        }}
+                    >
+                        <Box sx={{ justifySelf: "start", fontWeight: 600 }}>Routes Map</Box>
+
+                        <Button
+                            onClick={regenerateRoutes}
+                            variant="contained"
+                            color="error"
+                            disabled={busy}
+                            sx={{ justifySelf: "center", fontWeight: 700, borderRadius: 2 }}
+                        >
+                            Generate New Route
+                        </Button>
+
+                        <Box sx={{ justifySelf: "end" }}>
+                            <Link
+                                href="/drivers"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: 12, color: "#4b5563", textDecoration: "none" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
+                                onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+                            >
+                                Drivers →
+                            </Link>
+                        </Box>
+                    </Box>
                 </DialogTitle>
 
                 <DialogContent dividers sx={{ position: "relative", p: 0 }}>
@@ -266,33 +369,21 @@ export default function DriversDialog({
                         Download Labels
                     </Button>
 
+                    {/* New global actions */}
                     <Button
-                        onClick={async () => {
-                            const countStr = window.prompt("How many drivers for the new route?", String(driverCount));
-                            if (countStr == null) return;
-                            const count = Number(countStr);
-                            if (!Number.isFinite(count) || count <= 0) { alert("Enter a valid number."); return; }
-                            setDriverCount(count);
-                            const ok = window.confirm(`Regenerate routes for "${selectedDay}" with ${count} drivers?`);
-                            if (!ok) return;
-                            try {
-                                setBusy(true);
-                                const res = await fetch("/api/route/generate", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ day: selectedDay, driverCount: count }),
-                                });
-                                if (!res.ok) throw new Error(await res.text());
-                                await loadRoutes();
-                            } catch (e) {
-                                console.error(e); alert("Failed to regenerate.");
-                            } finally {
-                                setBusy(false);
-                            }
-                        }}
-                        variant="contained" color="error" disabled={busy}
+                        onClick={resetAllRoutes}
+                        variant="outlined"
+                        disabled={busy || !hasRoutes}
                     >
-                        Generate New Route
+                        Reset All Routes
+                    </Button>
+
+                    <Button
+                        onClick={optimizeAllRoutes}
+                        variant="outlined"
+                        disabled={busy || !hasRoutes}
+                    >
+                        Optimize All Routes
                     </Button>
                 </DialogActions>
             </Dialog>
