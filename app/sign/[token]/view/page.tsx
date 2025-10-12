@@ -329,7 +329,7 @@ export default function SignaturesViewPage() {
             page.drawText(`Date of Delivery: ${dateString || "—"}`, { x: margin + 12, y, size: 12, font });
             y -= lineGap;
 
-            // Type of Meals (checked boxes; your helpers already exist)
+            // Type of Meals (checked boxes)
             page.drawText("Type of Meals (if applicable):", { x: margin + 12, y, size: 12, font });
             y -= lineGap;
             drawCheckboxLine({ page, font, x: margin + 28, y, size: 12, text: "Breakfast" }); y -= lineGap;
@@ -363,18 +363,14 @@ export default function SignaturesViewPage() {
             if (remainingWidth > 40) {
                 const lines = wrapText(afterName, remainingWidth, font, 12);
                 if (lines.length) {
-                    // first chunk on same line after the name
                     page.drawText(lines[0], { x: margin + startWidth, y, size: 12, font });
                 }
-                // rest of chunks on new lines
                 for (let i = 1; i < lines.length; i++) {
                     y -= 16;
                     page.drawText(lines[i], { x: margin, y, size: 12, font });
                 }
-                // ensure a gap after the sentence even if it fit on one line
                 y -= 16;
             } else {
-                // if not enough room, put the whole sentence on new line(s)
                 y -= 16;
                 for (const ln of wrapText(afterName, usableWidth, font, 12)) {
                     page.drawText(ln, { x: margin, y, size: 12, font });
@@ -382,7 +378,7 @@ export default function SignaturesViewPage() {
                 }
             }
 
-            // Paragraph (wrapped, non-overlapping)
+            // Paragraph (wrapped)
             const para =
                 "This attestation documents that delivery occurred as stated. The information and electronic signature on this form may be used by the Social Care Network and its providers to verify service delivery for compliance and reimbursement purposes. The electronic signature is captured and retained with this record.";
 
@@ -425,9 +421,12 @@ export default function SignaturesViewPage() {
                 { x: margin, y: 72, size: 10, font, color: rgb(0.3, 0.3, 0.3) }
             );
 
-            // Download
-            const bytes = await pdf.save();
-            const blob = new Blob([bytes], { type: "application/pdf" });
+            // Download (TS-safe: ensure ArrayBuffer, not SharedArrayBuffer union)
+            const bytes = await pdf.save(); // Uint8Array (ArrayBufferLike)
+            const ab = new ArrayBuffer(bytes.byteLength);
+            new Uint8Array(ab).set(bytes); // copy -> now backed by a true ArrayBuffer
+            const blob = new Blob([ab], { type: "application/pdf" });
+
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             const fname = (fullName || "member").replace(/\s+/g, "_");

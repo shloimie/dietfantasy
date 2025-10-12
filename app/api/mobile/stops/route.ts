@@ -1,49 +1,87 @@
 // app/api/mobile/stops/route.ts
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { Stop, User } from "@prisma/client";
+import prisma from "../../../../lib/prisma";
 
-const prisma = new PrismaClient();
 export const dynamic = "force-dynamic";
 
-// Build absolute URL on the server (Next 15: headers() must be awaited)
-async function getServerBaseUrl() {
-    const { headers } = await import("next/headers");
-    const h = await headers();
-    const proto = h.get("x-forwarded-proto") ?? "http";
-    const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
-    return `${proto}://${host}`;
-}
+// Narrow types to match selected fields below (adjust if you change selects)
+type StopLite = Pick<
+    Stop,
+    | "id"
+    | "userId"
+    | "name"
+    | "address"
+    | "apt"
+    | "city"
+    | "state"
+    | "zip"
+    | "phone"
+    | "lat"
+    | "lng"
+    | "order"
+    | "completed"
+    | "proofUrl"
+>;
+type UserLite = Pick<
+    User,
+    "id" | "first" | "last" | "address" | "city" | "state" | "zip"
+>;
 
-export async function GET() {
-    const t0 = Date.now();
-    console.log("[stops API] GET start");
+/**
+ * Returns the ordered stops for a given driverId, with basic user info.
+ * Query: ?driverId=123
+ */
+export async function GET(req: Request) {
+    const url = new URL(req.url);
+    const driverIdParam = url.searchParams.get("driverId");
 
-    // 1) Load stops (manual completion only)
-    let stops: {
-        id: number;
-        userId: number;
-        order: number | null;
-        completed: boolean;
-        name: string | null;
-        address: string | null;
-        apt: string | null;
-        city: string | null;
-        state: string | null;
-        zip: string | null;
-        phone: string | null;
-        dislikes: string | null;
-        lat: number | null;
-        lng: number | null;
-    }[] = [];
+    if (!driverIdParam) {
+        return NextResponse.json(
+            { error: "Missing required query param: driverId" },
+            { status: 400 }
+        );
+    }
+
+    const driverId = Number(driverIdParam);
+    if (!Number.isFinite(driverId)) {
+        return NextResponse.json(
+            { error: "Invalid driverId" },
+            { status: 400 }
+        );
+    }
 
     try {
-        stops = await prisma.stop.findMany({
-            orderBy: [{ day: "asc" }, { order: "asc" }],
+        // 1) Fetch driver w/ stopIds
+        const driver = await prisma.driver.findUnique({
+            where: { id: driverId },
+            select: { id: true, name: true, color: true, stopIds: true },
+        });
+
+        if (!driver) {
+            return NextResponse.json(
+                { error: `Driver ${driverId} not found` },
+                { status: 404 }
+            );
+        }
+
+        const orderedIds = (Array.isArray(driver.stopIds) ? driver.stopIds : [])
+            .map((n) => Number(n))
+            .filter(Number.isFinite);
+
+        if (orderedIds.length === 0) {
+            return NextResponse.json({
+                driver: { id: driver.id, name: driver.name, color: driver.color },
+                stops: [],
+            });
+        }
+
+        // 2) Load stops for those IDs
+        const stops = (await prisma.stop.findMany({
+            where: { id: { in: orderedIds } },
             select: {
                 id: true,
                 userId: true,
-                order: true,
-                completed: true, // manual-only
                 name: true,
                 address: true,
                 apt: true,
@@ -51,74 +89,90 @@ export async function GET() {
                 state: true,
                 zip: true,
                 phone: true,
-                dislikes: true,
                 lat: true,
                 lng: true,
+                order: true,
+                completed: true,
+                proofUrl: true,
             },
-        });
-        console.log("[stops API] stops:", stops.length);
-    } catch (e) {
-        console.error("[stops API] prisma.stop.findMany error:", e);
-        return NextResponse.json({ ok: false, error: "stop query failed" }, { status: 500 });
-    }
+        })) as StopLite[];
 
-    // 2) Minimal users (for name + sign_token)
-    const userIds = Array.from(new Set(stops.map((s) => s.userId)));
-    console.log("[stops API] unique userIds:", userIds.length);
+        // Typed map for id -> Stop (or StopLite). Useful to restore original driver order
+        const stopById = new Map<number, StopLite>();
+        for (const s of stops) stopById.set(s.id, s);
 
-    let users:
-        | { id: number; first: string | null; last: string | null; sign_token: string | null }[]
-        | [] = [];
-    try {
-        users = userIds.length
-            ? await prisma.user.findMany({
+        // 3) Load related users for enrichment (only those present)
+        const userIds = Array.from(
+            new Set(stops.map((s) => s.userId).filter((v): v is number => !!v))
+        );
+
+        let users: UserLite[] = [];
+        if (userIds.length) {
+            users = (await prisma.user.findMany({
                 where: { id: { in: userIds } },
-                select: { id: true, first: true, last: true, sign_token: true },
-            })
-            : [];
-        console.log("[stops API] users fetched:", users.length);
-    } catch (e) {
-        console.error("[stops API] prisma.user.findMany error:", e);
-        users = [];
-    }
-    const userMap = new Map(users.map((u) => [u.id, u]));
-
-    // 3) Signature counts — reuse the SAME endpoint as the main site
-    //    This guarantees both UIs show identical numbers.
-    let sigMap = new Map<number, number>();
-    try {
-        const base = await getServerBaseUrl();
-        const url = `${base}/api/signatures/status`;
-        console.log("[stops API] fetching signature counts from:", url);
-
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) {
-            const txt = await res.text().catch(() => "");
-            console.warn("[stops API] signatures/status non-200:", res.status, txt.slice(0, 200));
-        } else {
-            const rows: { userId: number; collected: number }[] = await res.json();
-            console.log("[stops API] signatures/status rows:", rows.length);
-            sigMap = new Map(rows.map((r) => [Number(r.userId), Number(r.collected)]));
+                select: {
+                    id: true,
+                    first: true,
+                    last: true,
+                    address: true,
+                    city: true,
+                    state: true,
+                    zip: true,
+                },
+            })) as UserLite[];
         }
+
+        // ✅ Build a typed User map (fixes your Map constructor error)
+        const userMap = new Map<number, UserLite>();
+        for (const u of users) userMap.set(u.id, u);
+
+        // 4) Emit stops in the driver's intended order, filtered to those that still exist
+        const orderedStops = orderedIds
+            .filter((id) => stopById.has(id))
+            .map((id) => {
+                const s = stopById.get(id)!; // safe after .has
+                const u = s.userId ? userMap.get(s.userId) ?? null : null;
+
+                return {
+                    id: s.id,
+                    userId: s.userId ?? null,
+                    name: s.name,
+                    address: s.address,
+                    apt: s.apt ?? null,
+                    city: s.city,
+                    state: s.state,
+                    zip: s.zip,
+                    phone: s.phone ?? null,
+                    lat: s.lat ?? null,
+                    lng: s.lng ?? null,
+                    order: s.order ?? null,
+                    completed: s.completed,
+                    proofUrl: s.proofUrl ?? null,
+                    // Minimal embedded user info for display
+                    user: u
+                        ? {
+                            id: u.id,
+                            first: u.first,
+                            last: u.last,
+                            address: u.address,
+                            city: u.city,
+                            state: u.state,
+                            zip: u.zip,
+                        }
+                        : null,
+                };
+            });
+
+        return NextResponse.json({
+            driver: { id: driver.id, name: driver.name, color: driver.color },
+            stops: orderedStops,
+        });
     } catch (e) {
-        console.warn("[stops API] signatures/status fetch failed, falling back to 0s:", e);
+        console.error("[mobile/stops] error:", e);
+        // Return a safe shape for the app
+        return NextResponse.json(
+            { driver: { id: driverId, name: null, color: null }, stops: [] },
+            { status: 200 }
+        );
     }
-
-    // 4) Shape response (DO NOT auto-complete from signatures)
-    const result = stops.map((s) => {
-        const u = userMap.get(s.userId);
-        const sigCollected = sigMap.get(s.userId) ?? 0;
-        return {
-            ...s,
-            user: u ? { id: u.id, first: u.first, last: u.last } : null,
-            signToken: u?.sign_token ?? null,
-            sigCollected,
-        };
-    });
-
-    console.log("[stops API] shaped:", result.length, "in", Date.now() - t0, "ms");
-    const resp = NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
-    resp.headers.set("X-Stops", String(result.length));
-    resp.headers.set("X-Sigs-Source", "/api/signatures/status");
-    return resp;
 }
