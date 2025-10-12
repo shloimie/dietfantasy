@@ -9,12 +9,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/**
- * ──────────────────────────────────────────────────────────
- * EXISTING TABLES (unchanged from your project)
- * ──────────────────────────────────────────────────────────
- */
-
 model User {
   id       Int     @id @default(autoincrement())
   first    String
@@ -38,8 +32,35 @@ model User {
   geocodedAt DateTime?
   lat        Float?    @db.DoublePrecision
   lng        Float?    @db.DoublePrecision
+  visits     Json      @default("[]")
+  sign_token String?   @unique
+
+  signatures Signature[]
 
   @@map("User") // maps Prisma model User -> table public."User"
+}
+
+model Signature {
+  id        BigInt   @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int      @map("user_id")
+  slot      Int
+  strokes   Json
+  signedAt  DateTime @default(now()) @map("signed_at")
+  ip        String?
+  userAgent String?  @map("user_agent")
+
+  @@unique([userId, slot])
+  @@map("Signature")
+}
+
+model Route {
+  id      Int     @id @default(autoincrement())
+  name    String
+  color   String?
+  stopIds Int[]   @default([]) @map("stop_ids")
+
+  @@map("Route")
 }
 
 model Schedule {
@@ -66,14 +87,6 @@ model CityColor {
 
   @@map("CityColor")
 }
-
-/**
- * ──────────────────────────────────────────────────────────
- * NEW SEPARATED TABLES (no route relational table)
- * Drivers reference their stops by JSON array of stop IDs.
- * Stops are independent rows (optionally mirror assignedDriverId).
- * ──────────────────────────────────────────────────────────
- */
 
 model Driver {
   id        Int      @id @default(autoincrement())
@@ -112,12 +125,3 @@ model Stop {
   @@index([day])
   @@map("Stop")
 }
-
-/**
- * ──────────────────────────────────────────────────────────
- * DEPRECATED (no longer used):
- * - DriverRoute
- * - RoutePlan
- * Remove/ignore in DB if present.
- * ──────────────────────────────────────────────────────────
- */

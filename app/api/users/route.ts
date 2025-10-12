@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import prisma from "../../../lib/prisma";
 import { geocodeIfNeeded } from "../../../lib/geocode";
 
-// keep all 7 keys, default true
 function sanitizeSchedule(input: any) {
     const s = input ?? {};
     return {
@@ -36,16 +35,24 @@ export async function GET() {
             medicaid: true,
             paused: true,
             complex: true,
-            lat: true,          // <- make sure these are included
-            lng: true,          // <-
-            schedule: true,
+            lat: true,
+            lng: true,
+            // ✅ include visits so the PROOF column can read it
+            visits: true,
+            // (optional) select only the 7 flags you render
+            schedule: {
+                select: {
+                    monday: true, tuesday: true, wednesday: true,
+                    thursday: true, friday: true, saturday: true, sunday: true,
+                },
+            },
         },
     });
 
     return NextResponse.json(list);
 }
 
-// ---------- POST /api/users
+// ---------- POST /api/users (unchanged)
 export async function POST(req: Request) {
     const b = await req.json();
     const scheduleInput = sanitizeSchedule(b.schedule);

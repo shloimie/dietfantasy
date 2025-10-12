@@ -46,7 +46,6 @@ function useUsersApi() {
 
     return { users, isLoading: loading, refetch };
 }
-
 /* =========================
    City colors (DB-backed)
    ========================= */
@@ -329,12 +328,24 @@ export default function UsersPage() {
         [refetch]
     );
 
-    /* ===== Render ===== */
+
+    const [showDetails, setShowDetails] = React.useState(false);
 
     return (
-        <Box sx={{ p: 2 }}>
-            {/* Search + live total counter */}
-            <Box sx={{ mb: 2, mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ width: "100%", m: 0, p: 2 }}>
+            {/* Search + live total + subtle details toggle */}
+            <Box
+                sx={{
+                    mb: 2,
+                    mt: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                }}
+            >
+                {/* Search input */}
                 <TextField
                     size="small"
                     fullWidth
@@ -354,9 +365,39 @@ export default function UsersPage() {
                             </InputAdornment>
                         ) : null,
                     }}
+                    sx={{ flex: 1 }}
                 />
-                <Box sx={{ whiteSpace: "nowrap", color: "text.secondary", fontSize: 14 }}>
-                    Total: {displayedUsers.length}
+
+                {/* Right side: Total count + toggle */}
+                <Box
+                    sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        whiteSpace: "nowrap",
+                    }}
+                >
+                    <Box sx={{ color: "text.secondary", fontSize: 14 }}>
+                        Total: {displayedUsers.length}
+                    </Box>
+
+                    {/* Subtle expand toggle */}
+                    <IconButton
+                        size="small"
+                        onClick={() => setShowDetails((v) => !v)}
+                        sx={{
+                            border: "1px solid #ccc",
+                            borderRadius: 1,
+                            padding: "2px 6px",
+                            fontSize: 12,
+                            color: showDetails ? "primary.main" : "text.secondary",
+                            backgroundColor: showDetails ? "action.hover" : "transparent",
+                            "&:hover": { backgroundColor: "action.selected" },
+                        }}
+                        title={showDetails ? "Hide extra columns" : "Show extra columns"}
+                    >
+                        {showDetails ? "−" : "+"}
+                    </IconButton>
                 </Box>
             </Box>
 
@@ -383,6 +424,7 @@ export default function UsersPage() {
                 sortAsc={sortAsc}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                showDetails={showDetails}
             />
 
             {/* Modals */}
@@ -401,29 +443,23 @@ export default function UsersPage() {
                 open={cityColorsOpen}
                 onClose={async () => {
                     setCityColorsOpen(false);
-                    await fetchCityColors(); // ensure UI reflects DB after closing
+                    await fetchCityColors();
                 }}
                 cityColors={cityColors}
                 onSave={async (newMap) => {
-                    // Persist adds/edits; remove deletions
                     const newEntries = Object.entries(newMap || {});
-                    const newKeys = new Set(
-                        newEntries.map(([k]) => norm(k))
-                    );
+                    const newKeys = new Set(newEntries.map(([k]) => norm(k)));
 
-                    // upserts
                     for (const [city, hex] of newEntries) {
                         await upsertCityColor(city, hex);
                     }
 
-                    // deletions
                     for (const oldCity of Object.keys(cityColors)) {
                         if (!newKeys.has(norm(oldCity))) {
                             await removeCityColor(oldCity);
                         }
                     }
 
-                    // local state for immediate UI, then hard refresh from DB
                     setCityColors(newMap || {});
                     await fetchCityColors();
                 }}

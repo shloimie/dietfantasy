@@ -1,0 +1,185 @@
+/* ==============================
+   Global tokens & resets
+   ============================== */
+:root{
+    --brand:#3665F3;         /* default brand (overridden per-route with inline --brand) */
+    --bg:#eef2f7;
+    --panel:#f6f7f9;
+    --card:#ffffff;
+    --text:#111;
+    --muted:#6b7280;
+    --border:#e5e7eb;
+    --shadow:0 8px 22px rgba(16,24,40,.06), 0 2px 8px rgba(16,24,40,.04);
+    --success:#16a34a;
+    --radius:14px;
+}
+
+*{box-sizing:border-box}
+html,body{
+    margin:0; padding:0;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+}
+a{color:inherit; text-decoration:none}
+h1,h2,h3,p{margin:0}
+
+/* Page container (optional wrapper in app/layout) */
+.container{max-width:900px; margin:32px auto; padding:0 20px}
+
+/* ==============================
+   Typographic helpers
+   ============================== */
+.h1{font-size:28px; font-weight:800}
+.bold{font-weight:800}
+.muted{color:var(--muted)}
+
+/* ==============================
+   Card primitives
+   ============================== */
+.card{
+    border:1px solid var(--border);
+    background:var(--card);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    position:relative;
+    overflow:hidden;          /* so color rails clip to rounded corners */
+}
+.card-content{padding:18px 20px}   /* comfy default padding */
+
+/* Optional theme border tint when a card is inside a theme wrapper */
+.theme .card{ border-color: color-mix(in oklab, var(--brand) 16%, var(--border)); }
+
+/* Left color rail utility - place as first child of .card */
+.color-rail{
+    position:absolute; left:0; top:0; bottom:0; width:6px;
+    background:var(--brand);
+    border-top-left-radius:var(--radius);
+    border-bottom-left-radius:var(--radius);
+}
+
+/* ==============================
+   Layout helpers
+   ============================== */
+.row{display:flex; align-items:center; justify-content:space-between; gap:12px}
+.flex{display:flex; align-items:center; gap:8px}
+
+/* Section/grid rhythm */
+.grid{display:grid; gap:20px}                  /* generous space between items */
+section.grid{display:grid; gap:20px}          /* stops list spacing */
+
+/* Header (icon + title) */
+.hdr{display:flex; align-items:center; gap:12px; margin-bottom:16px}
+.hdr-badge{
+    width:44px; height:44px; border-radius:12px;
+    display:grid; place-items:center;
+    background:#e7eefc; color:#2748d8;
+    box-shadow:inset 0 0 0 1px rgba(39,72,216,.12);
+}
+
+/* ==============================
+   Buttons
+   ============================== */
+.btn{
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:8px 12px; border-radius:10px;
+    border:1px solid var(--border);
+    background:#111; color:#fff; cursor:pointer; user-select:none;
+}
+.btn:hover{filter:brightness(1.04)}
+.btn:disabled{opacity:.6; cursor:default}
+.btn-outline{background:#fff; color:#111; border-color:var(--border)}
+.btn-muted{background:#f3f4f6; color:var(--muted)}
+
+/* ==============================
+   Progress bar
+   ============================== */
+.progress{
+    width:100%; height:10px; border-radius:999px;
+    background:#f1f5f9; overflow:hidden;
+}
+.progress>span{
+    display:block; height:100%; border-radius:999px;
+    background:var(--brand); transition:width .25s ease;
+}
+
+/* ==============================
+   Pills (numbered circular markers)
+   ============================== */
+.pill{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:26px; height:26px; border-radius:50%;
+    background:#fff; color:var(--brand);
+    border:2px solid var(--brand);
+    font-weight:700; font-size:14px; flex-shrink:0;
+}
+
+/* ==============================
+   Search bar
+   ============================== */
+.search-wrap{margin-top:16px; margin-bottom:16px}
+.search-bar{display:flex; gap:10px}
+.search-input{
+    flex:1; border:1px solid var(--border); background:#fff;
+    border-radius:12px; padding:10px 12px; font-size:14px;
+}
+.search-result{margin-top:12px}
+.search-card{
+    border:1px solid var(--border); background:#fff; border-radius:12px; padding:12px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04);
+}
+
+/* ==============================
+   Stop rows
+   ============================== */
+/* Remove any legacy border-left; we use a real rail element */
+.stop-card .card-content{ padding:18px 20px } /* a touch more than default for density */
+.stop-done{ opacity:.97 }                      /* subtle done look */
+
+/* Key-value column under stop title */
+.kv{display:grid; gap:6px; margin-top:8px}
+.link{color:#1d4ed8; text-decoration:none}
+.link:hover{text-decoration:underline}
+
+/* ==============================
+   Header banner (driver detail)
+   ============================== */
+.banner{
+    background:linear-gradient(0deg, var(--brand), var(--brand));
+    color:#fff;
+}
+.banner .card-content{padding:18px 20px}
+.banner small{opacity:.9}
+
+/* Extra vertical rhythm between banner, search, and list */
+.banner + .search-wrap{ margin-top:16px }
+.search-wrap + section.grid{ margin-top:14px }
+
+/* ==============================
+   Drivers list item
+   ============================== */
+.driver-card .progress{ background:#eef2f7 }
+.driver-card .hdr-badge{
+    background:#fff; color:var(--brand);
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);
+}
+
+/* ==============================
+   Utilities
+   ============================== */
+.hide{display:none}
+.center{display:grid; place-items:center}
+
+
+/* minimal reset + bg */
+html, body, #__next {
+    height: 100%;
+    width: 100%;
+}
+body {
+    margin: 0;
+    padding: 0;
+
+}
+
+
+
