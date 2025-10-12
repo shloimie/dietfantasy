@@ -19,9 +19,7 @@ import CityColorsDialog from "../components/CityColorsDialog";
 import DriversDialog from "../components/DriversDialog";
 import DriversMap from "../components/DriversMap";
 
-/* =========================
-   Data loading (users)
-   ========================= */
+
 
 function useUsersApi() {
     const [users, setUsers] = React.useState([]);

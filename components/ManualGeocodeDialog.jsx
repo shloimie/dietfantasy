@@ -102,7 +102,7 @@ export default function ManualGeocodeDialog({
             } catch (e2) {
                 const msg = e2?.message || e1?.message || "No match";
                 markError(row.id, msg);
-                fetchCandidates(row); // auto-open suggestions on failure
+                // fetchCandidates(row); // auto-open suggestions on failure
                 return false;
             }
         }
