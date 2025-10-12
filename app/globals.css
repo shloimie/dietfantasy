@@ -24,7 +24,7 @@ a{color:inherit; text-decoration:none}
 h1,h2,h3,p{margin:0}
 
 /* Page container (optional wrapper in app/layout) */
-.container{max-width:900px; margin:32px auto; padding:0 20px}
+.container{max-width:900px; padding:0 20px}
 
 /* ==============================
    Typographic helpers

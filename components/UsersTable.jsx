@@ -1,8 +1,7 @@
-// components/UsersTable.jsx
 import React from "react";
-import { Button, IconButton, Tooltip } from "@mui/material";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import LinkIcon from "@mui/icons-material/Link";
+import { Button, IconButton, Tooltip, CircularProgress } from "@mui/material";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import DoneIcon from "@mui/icons-material/Done";
 
 export default function UsersTable({
                                        users,
@@ -14,41 +13,109 @@ export default function UsersTable({
                                        onDelete,
                                        showDetails = false,
                                    }) {
-    // signature counts (userId -> number)
+    // Signature counts (userId -> number)
     const [sigCount, setSigCount] = React.useState({});
-    // cache of tokens we might fetch on-demand
-    const [tokenPatch, setTokenPatch] = React.useState({}); // { [userId]: sign_token }
+    // Cache of tokens we might fetch on-demand
+    const [tokenPatch, setTokenPatch] = React.useState({});
+    // Track copied state by user ID
+    const [copiedUsers, setCopiedUsers] = React.useState({});
+    // Track loading state by user ID
+    const [loadingUsers, setLoadingUsers] = React.useState({});
 
     React.useEffect(() => {
         let cancelled = false;
         (async () => {
             try {
                 const res = await fetch("/api/signatures/status", { cache: "no-store" });
-                if (!res.ok) return;
+                if (!res.ok) {
+                    console.error(`Failed to fetch signatures: ${res.status}`);
+                    return;
+                }
                 const rows = await res.json(); // [{ userId, collected }]
                 if (cancelled) return;
                 const map = {};
                 for (const r of rows) map[r.userId] = r._count?.userId ?? r.collected ?? 0;
                 setSigCount(map);
-            } catch {}
+            } catch (err) {
+                console.error("Error fetching signatures:", err);
+            }
         })();
         return () => {
             cancelled = true;
         };
     }, []);
 
+    // Replace getToken with this robust version
     const getToken = async (u) => {
-        const existing = tokenPatch[u.id] ?? u.sign_token;
-        if (existing) return existing;
+        // 1) Try any cached / already-present token on the user
+        const existing =
+            tokenPatch[u.id] ??
+            u.signToken ??
+            u.sign_token ??
+            u.token ??
+            null;
+
+        if (existing) {
+            console.log(`[DEBUG] Using cached/existing token for user ${u.id}: ${existing}`);
+            return existing;
+        }
+
+        // 2) Try to fetch/ensure a token (handle both old/new API shapes)
+        setLoadingUsers((prev) => ({ ...prev, [u.id]: true }));
         try {
-            const res = await fetch(`/api/signatures/ensure-token/${u.id}`, { method: "POST" });
-            if (res.ok) {
-                const { sign_token } = await res.json();
-                setTokenPatch((m) => ({ ...m, [u.id]: sign_token }));
-                return sign_token;
+            // First attempt: legacy path-param endpoint
+            const tryLegacy = async () => {
+                const res = await fetch(`/api/signatures/ensure-token/${u.id}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                });
+                if (!res.ok) throw new Error(`legacy ensure-token failed ${res.status}`);
+                const data = await res.json();
+                const token =
+                    data.sign_token ??
+                    data.signToken ??
+                    data.token ??
+                    null;
+                if (!token) throw new Error("legacy ensure-token: no token in response");
+                return token;
+            };
+
+            // Second attempt: body-based endpoint
+            const tryBody = async () => {
+                const res = await fetch(`/api/signatures/ensure-token`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId: u.id }),
+                });
+                if (!res.ok) throw new Error(`body ensure-token failed ${res.status}`);
+                const data = await res.json();
+                const token =
+                    data.sign_token ??
+                    data.signToken ??
+                    data.token ??
+                    null;
+                if (!token) throw new Error("body ensure-token: no token in response");
+                return token;
+            };
+
+            let token = null;
+            try {
+                token = await tryLegacy();
+            } catch (e1) {
+                console.warn("[DEBUG] Legacy ensure-token failed, trying body endpoint:", e1?.message);
+                token = await tryBody();
             }
-        } catch {}
-        return null;
+
+            setTokenPatch((m) => ({ ...m, [u.id]: token }));
+            console.log(`[DEBUG] Ensured token for user ${u.id}: ${token}`);
+            return token;
+        } catch (err) {
+            console.error("[DEBUG] getToken failed:", err);
+            return null;
+        } finally {
+            setLoadingUsers((prev) => ({ ...prev, [u.id]: false }));
+        }
     };
 
     const geoCount = Array.isArray(users)
@@ -63,43 +130,91 @@ export default function UsersTable({
         render: (u) => {
             const collected = sigCount[u.id] ?? 0;
             const done = collected >= 5;
+            const isCopied = copiedUsers[u.id] || false;
+            const isLoading = loadingUsers[u.id] || false;
 
+            // Inside signColumn.render, replace handleClick with this version
             const handleClick = async () => {
+                console.log(`[DEBUG] Clicked SIGN for user ${u.id}`);
+                if (isLoading) return;
+                setLoadingUsers((prev) => ({ ...prev, [u.id]: true }));
+
                 const token = await getToken(u);
+                setLoadingUsers((prev) => ({ ...prev, [u.id]: false }));
                 if (!token) {
-                    alert("Could not create a signature link for this user.");
+                    alert("Could not create a signature link for this user. Please try again.");
                     return;
                 }
+
+                const base = `${window.location.origin}/sign/${token}`;
                 if (done) {
-                    // open read-only viewer
-                    window.open(`/sign/${token}/view`, "_blank", "noopener,noreferrer");
+                    // Prefer /view, but fall back to plain page if it 404s
+                    const viewerUrl = `${base}/view`;
+                    try {
+                        const head = await fetch(viewerUrl, { method: "HEAD" });
+                        const urlToOpen = head.ok ? viewerUrl : base;
+                        console.log(`[DEBUG] Opening ${head.ok ? "viewer" : "fallback"} URL for user ${u.id}: ${urlToOpen}`);
+                        window.open(urlToOpen, "_blank", "noopener,noreferrer");
+                    } catch (e) {
+                        console.warn("[DEBUG] HEAD preflight failed, opening fallback:", e?.message);
+                        window.open(base, "_blank", "noopener,noreferrer");
+                    }
                 } else {
-                    // copy public link
-                    const link = `${window.location.origin}/sign/${token}`;
-                    await navigator.clipboard.writeText(link);
-                    // alert("Signature link copied to clipboard!");
+                    // Copy the public link
+                    try {
+                        await navigator.clipboard.writeText(base);
+                        setCopiedUsers((prev) => ({ ...prev, [u.id]: true }));
+                        setTimeout(() => {
+                            setCopiedUsers((prev) => ({ ...prev, [u.id]: false }));
+                        }, 2000);
+                        console.log(`[DEBUG] Copied link for user ${u.id}: ${base}`);
+                    } catch (err) {
+                        console.error("Failed to copy link:", err);
+                        alert("Failed to copy link to clipboard.");
+                    }
                 }
             };
 
             return (
-                <Tooltip title={done ? "View completed signatures" : "Copy public signature link"}>
+                <Tooltip title={done ? "View completed signatures" : isCopied ? "Link Copied! 🎉" : "Copy public signature link"}>
                     <IconButton
                         size="small"
                         onClick={handleClick}
                         aria-label={done ? "Open signatures" : "Copy signature link"}
+                        disabled={isLoading}
                     >
-                        {done ? <CheckCircleIcon style={{ color: "#4caf50" }} /> : <LinkIcon style={{ color: "#1976d2" }} />}
+                        {isLoading ? (
+                            <CircularProgress size={20} color="primary" />
+                        ) : done ? (
+                            <DoneIcon style={{ color: "#4caf50", transform: "scale(1.2)", transition: "transform 0.2s" }} />
+                        ) : isCopied ? (
+                            <DoneIcon
+                                style={{
+                                    color: "#4caf50",
+                                    transform: "scale(1.2)",
+                                    transition: "transform 0.2s",
+                                }}
+                            />
+                        ) : (
+                            <ContentCopyIcon
+                                style={{
+                                    color: "#1976d2",
+                                    transform: "scale(1)",
+                                    transition: "transform 0.2s",
+                                }}
+                            />
+                        )}
                     </IconButton>
                 </Tooltip>
             );
         },
     };
 
-    // base columns (always visible) — SIGN goes right after LAST
+    // Base columns (always visible) — SIGN goes right after LAST
     const baseColumns = [
         { key: "first", label: "FIRST", render: (u) => u.first ?? "" },
         { key: "last", label: "LAST", render: (u) => u.last ?? "" },
-        signColumn, // <-- always shown, right after LAST
+        signColumn,
         { key: "address", label: "ADDRESS", render: (u) => u.address ?? "" },
         { key: "apt", label: "APT", render: (u) => u.apt ?? "" },
         {
@@ -127,7 +242,7 @@ export default function UsersTable({
         },
     ];
 
-    // detail columns (only when showDetails = true) — PROOF removed
+    // Detail columns (only when showDetails = true)
     const detailColumns = [
         { key: "county", label: "COUNTY", render: (u) => u.county ?? "" },
         { key: "zip", label: "ZIP", render: (u) => u.zip ?? "" },
@@ -162,35 +277,35 @@ export default function UsersTable({
         <table
             border="1"
             cellPadding="6"
-            style={{ width: "100%", borderCollapse: "collapse", tableLayout: "auto" }}
+            style={{ width: "100%", borderCollapse: "collapse", tableLayout: "auto", margin: 0 }}
         >
             <thead>
             <tr>
-                <th style={{ width: 50 }}>#</th>
+                <th style={{ width: 50, margin: 0 }}>#</th>
                 {visibleColumns.map((c) => (
                     <th
                         key={c.key}
                         onClick={() => onSort && onSort(c.key)}
-                        style={{ cursor: onSort ? "pointer" : "default", verticalAlign: "top" }}
+                        style={{ cursor: onSort ? "pointer" : "default", verticalAlign: "top", margin: 0 }}
                         title={onSort ? "Click to sort" : undefined}
                     >
                         {c.label}
                         {sortKey === c.key ? (sortAsc ? " ▲" : " ▼") : ""}
                     </th>
                 ))}
-                <th style={{ width: 180 }}>ACTIONS</th>
+                <th style={{ width: 180, margin: 0 }}>ACTIONS</th>
             </tr>
             </thead>
             <tbody>
             {users.map((u, i) => (
-                <tr key={u.id} style={{ verticalAlign: "top" }}>
-                    <td>{i + 1}</td>
+                <tr key={u.id} style={{ verticalAlign: "top", margin: 0 }}>
+                    <td style={{ margin: 0 }}>{i + 1}</td>
                     {visibleColumns.map((c) => (
-                        <td key={c.key} style={{ verticalAlign: "top" }}>
+                        <td key={c.key} style={{ verticalAlign: "top", margin: 0 }}>
                             {c.render(u)}
                         </td>
                     ))}
-                    <td style={{ whiteSpace: "nowrap", verticalAlign: "top" }}>
+                    <td style={{ whiteSpace: "nowrap", verticalAlign: "top", margin: 0 }}>
                         <Button size="small" onClick={() => onEdit?.(u)} disabled={!onEdit}>
                             Edit
                         </Button>

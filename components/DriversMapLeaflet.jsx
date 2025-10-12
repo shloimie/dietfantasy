@@ -16,6 +16,7 @@ import {
     ZoomControl,
     useMap,
     CircleMarker,
+    Polyline,            // ⬅️ added
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -140,6 +141,9 @@ export default function DriversMapLeaflet({
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
     const pendingOpenIdRef = useRef(null);
+
+    // ⬅️ NEW: toggle for drawing route polylines
+    const [showRouteLines, setShowRouteLines] = useState(false);
 
     const { bounds, assignedIdSet } = useMemo(() => {
         const pts = [];
@@ -324,6 +328,27 @@ export default function DriversMapLeaflet({
                     Drivers ({totalAssigned} assigned)
                 </div>
 
+                {/* ⬅️ NEW: toggle to show route polylines */}
+                <label
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 13,
+                        marginBottom: 10,
+                        userSelect: "none",
+                    }}
+                    title="Draw a line connecting stops in order for each driver"
+                >
+                    <input
+                        type="checkbox"
+                        checked={showRouteLines}
+                        onChange={(e) => setShowRouteLines(e.target.checked)}
+                        style={{ transform: "translateY(1px)" }}
+                    />
+                    Show route lines
+                </label>
+
                 <button
                     type="button"
                     onClick={jumpToNextUnrouted}
@@ -495,6 +520,27 @@ export default function DriversMapLeaflet({
                             interactive={false}
                         />
                     )}
+
+                    {/* ⬅️ NEW: draw route lines per driver, in stop order */}
+                    {showRouteLines &&
+                        drivers.map((d) => {
+                            const pts = (d.stops || [])
+                                .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+                                .map((s) => [s.lat, s.lng]);
+                            if (pts.length < 2) return null;
+                            return (
+                                <Polyline
+                                    key={`route-${String(d.driverId)}`}
+                                    positions={pts}
+                                    pathOptions={{
+                                        color: d.color || "#1f77b4",
+                                        weight: 4,
+                                        opacity: 0.8,
+                                    }}
+                                />
+                            );
+                        })
+                    }
 
                     {/* UNROUTED markers */}
                     {unroutedFiltered.map((s) =>

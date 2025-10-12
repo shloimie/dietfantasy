@@ -1,131 +1,144 @@
+// app/api/route/optimize/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient, Stop } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-type Pt = { id: number; lat: number; lng: number };
+// Fixed Diet Fantasy origin
+const ORIGIN = { lat: 41.14602684379917, lng: -73.98927105396123 };
 
-function distance(a: Pt, b: Pt) {
-    const dLat = a.lat - b.lat;
-    const dLng = a.lng - b.lng;
-    // Euclidean in degrees is fine for short distances; if you prefer Haversine, plug it in.
-    return Math.sqrt(dLat * dLat + dLng * dLng);
+type Body = {
+    day?: string;                  // "monday"..."sunday" or "all" (default "all")
+    driverId?: number | string;    // optional: rotate a single driver
+    useDietFantasyStart?: boolean; // if false, we simply return ok without changes
+};
+
+function normalizeDay(raw?: string | null) {
+    const s = String(raw ?? "all").toLowerCase().trim();
+    const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday","all"];
+    return days.includes(s) ? s : "all";
+}
+
+function haversineMiles(a: {lat:number;lng:number}, b: {lat:number;lng:number}) {
+    const R = 3958.7613;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function rotateAtIndex<T>(arr: T[], idx: number) {
+    if (!arr.length || idx <= 0) return arr.slice();
+    return [...arr.slice(idx), ...arr.slice(0, idx)];
+}
+
+/** Safely coerce Prisma.JsonValue stopIds -> number[] */
+function jsonToNumberArray(val: Prisma.JsonValue | null | undefined): number[] {
+    if (!Array.isArray(val)) return [];
+    // val is now JsonArray; coerce each entry to number if possible
+    return (val as Prisma.JsonArray)
+        .map((v) => (v == null ? NaN : Number(v as any)))
+        .filter((n) => Number.isFinite(n)) as number[];
 }
 
 /**
- * Basic nearest-neighbor tour:
- * - Start at the stop with the smallest current "order" if present,
- *   otherwise the westernmost (min lng).
+ * Rotate one driver so their first stop is the one nearest to ORIGIN.
+ * Persists Stop.order (1..N) and Driver.stopIds.
  */
-function nearestNeighborOrder(points: Pt[], existing: Stop[]) {
-    if (points.length <= 1) return points.map(p => p.id);
+async function rotateDriverToDietFantasyStart(driverId: number) {
+    const driver = await prisma.driver.findUnique({
+        where: { id: driverId },
+        select: { id: true, stopIds: true },
+    });
+    if (!driver) return { driverId, changed: false, reason: "driver not found" };
 
-    // Prefer existing smallest order as a starting anchor to avoid total churn
-    const withOrder = existing
-        .filter(s => typeof s.order === "number" && points.some(p => p.id === s.id))
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const ids: number[] = jsonToNumberArray(driver.stopIds);
+    if (!ids.length) return { driverId, changed: false, reason: "no stops" };
 
-    let startId: number;
-    if (withOrder.length > 0) {
-        startId = withOrder[0].id;
-    } else {
-        // fallback: westernmost
-        startId = points.reduce((minId, p) => {
-            const minP = points.find(pp => pp.id === minId)!;
-            return p.lng < minP.lng ? p.id : minId;
-        }, points[0].id);
-    }
+    const stops = await prisma.stop.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, lat: true, lng: true },
+    });
+    const byId = new Map(stops.map((s) => [s.id, s]));
+    const ordered = ids.map((sid) => byId.get(sid)!).filter(Boolean);
 
-    const remaining = new Map(points.map(p => [p.id, p]));
-    const path: number[] = [];
-
-    let current = remaining.get(startId)!;
-    remaining.delete(startId);
-    path.push(current.id);
-
-    while (remaining.size) {
-        let best: Pt | null = null;
-        let bestD = Infinity;
-        for (const p of remaining.values()) {
-            const d = distance(current, p);
-            if (d < bestD) {
-                bestD = d;
-                best = p;
-            }
+    // pick nearest index that has coords
+    let bestIdx = 0, bestDist = Number.POSITIVE_INFINITY;
+    ordered.forEach((s, i) => {
+        if (typeof s?.lat === "number" && typeof s?.lng === "number") {
+            const dMi = haversineMiles(ORIGIN, { lat: s.lat!, lng: s.lng! });
+            if (dMi < bestDist) { bestDist = dMi; bestIdx = i; }
         }
-        current = best!;
-        path.push(current.id);
-        remaining.delete(current.id);
-    }
-    return path;
+    });
+
+    const rotatedIds = rotateAtIndex(ids, bestIdx);
+
+    // Persist orders 1..N (array overload, no timeout/options)
+    await prisma.$transaction(
+        rotatedIds.map((sid, i) =>
+            prisma.stop.update({
+                where: { id: sid },
+                data: { order: i + 1 },
+            })
+        )
+    );
+
+    // Persist stopIds on Driver
+    await prisma.driver.update({
+        where: { id: driver.id },
+        data: { stopIds: rotatedIds as unknown as Prisma.InputJsonValue },
+    });
+
+    return { driverId, changed: true, bestIdx };
 }
 
-/**
- * POST /api/route/optimize
- * body: { driverId: number, day?: string }
- * If day is omitted, optimizes across all days for that driver (usually you’ll pass the active day).
- */
 export async function POST(req: NextRequest) {
     try {
-        const { driverId, day } = await req.json();
+        const body = (await req.json()) as Body;
+        const day = normalizeDay(body.day);
+        const useDietFantasyStart = !!body.useDietFantasyStart;
+        const oneDriverId = body.driverId != null ? Number(body.driverId) : null;
 
-        if (!driverId || typeof driverId !== "number") {
-            return NextResponse.json({ error: "driverId (number) required" }, { status: 400 });
+        if (!useDietFantasyStart) {
+            // no-op, but keep endpoint forgiving
+            return NextResponse.json({ ok: true, appliedStartRotation: false, summary: [] });
         }
 
-        const where: any = { assignedDriverId: driverId };
-        if (day && typeof day === "string") where.day = day;
-
-        const stops = await prisma.stop.findMany({
-            where,
-            orderBy: [{ order: "asc" }, { id: "asc" }],
-        });
-
-        const geocoded = stops.filter(s => typeof s.lat === "number" && typeof s.lng === "number");
-        const missingGeo = stops.length - geocoded.length;
-
-        if (geocoded.length < 2) {
-            // Nothing to optimize
+        // IMPORTANT: check !== null (0 is a valid number but falsy)
+        if (oneDriverId !== null) {
+            const result = await rotateDriverToDietFantasyStart(oneDriverId);
             return NextResponse.json({
                 ok: true,
-                optimized: 0,
-                note: geocoded.length === 0 ? "No geocoded stops" : "Only one geocoded stop",
-                missingGeo,
+                appliedStartRotation: true,
+                summary: [result],
             });
         }
 
-        const pts: Pt[] = geocoded.map(s => ({ id: s.id, lat: s.lat!, lng: s.lng! }));
-        const orderIds = nearestNeighborOrder(pts, stops);
+        // Otherwise rotate all drivers for the given day
+        const drivers = await prisma.driver.findMany({
+            where: day === "all" ? {} : { day },
+            select: { id: true },
+            orderBy: { id: "asc" },
+        });
 
-        // Persist new order (1-based index so it reads nicely in UIs)
-        // NOTE: we only reorder the geocoded subset; un-geocoded stops get appended after.
-        const updates: { id: number; order: number }[] = [];
-        orderIds.forEach((id, idx) => updates.push({ id, order: idx + 1 }));
-
-        // Append non-geocoded stops after the optimized list, preserving their previous relative order
-        let next = updates.length + 1;
-        stops
-            .filter(s => !geocoded.some(g => g.id === s.id))
-            .forEach(s => updates.push({ id: s.id, order: next++ }));
-
-        // Batched updates
-        await prisma.$transaction(
-            updates.map(u =>
-                prisma.stop.update({
-                    where: { id: u.id },
-                    data: { order: u.order },
-                })
-            )
-        );
+        const results = [];
+        for (const d of drivers) {
+            const r = await rotateDriverToDietFantasyStart(d.id);
+            results.push(r);
+        }
 
         return NextResponse.json({
             ok: true,
-            optimized: orderIds.length,
-            appendedWithoutGeo: updates.length - orderIds.length,
-            missingGeo,
+            appliedStartRotation: true,
+            summary: results,
         });
-    } catch (err: any) {
-        console.error("[/api/route/optimize] Error:", err);
-        return NextResponse.json({ error: "Server error" }, { status: 500 });
+    } catch (e: any) {
+        console.error("[/api/route/optimize] error", e);
+        return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
     }
 }

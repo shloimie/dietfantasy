@@ -1,25 +1,21 @@
 // app/api/signatures/admin/[token]/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
-
-export const runtime = "nodejs";
 
 const prisma = new PrismaClient();
 
-function noStore(res: NextResponse) {
-    res.headers.set("Cache-Control", "no-store");
-    return res;
-}
-
-/** GET: return user info + signatures for this token */
 export async function GET(
-    _req: NextRequest,
+    _req: Request,
     ctx: { params: Promise<{ token: string }> }
 ) {
     try {
         const { token } = await ctx.params;
+        if (!token) {
+            return NextResponse.json({ error: "Missing token" }, { status: 400 });
+        }
 
-        const user = await prisma.user.findUnique({
+        // Your schema only has `sign_token`
+        const user = await prisma.user.findFirst({
             where: { sign_token: token },
             select: {
                 id: true,
@@ -34,65 +30,65 @@ export async function GET(
         });
 
         if (!user) {
-            return noStore(
-                NextResponse.json({ error: "Not found" }, { status: 404 })
-            );
+            return NextResponse.json({ error: "Not found" }, { status: 404 });
         }
 
+        // Adjust model name if yours is different (Signature vs Signatures)
         const sigs = await prisma.signature.findMany({
             where: { userId: user.id },
+            orderBy: [{ slot: "asc" }, { signedAt: "asc" }],
             select: {
                 slot: true,
-                strokes: true,      // JSON[] of strokes as saved by your signer
+                strokes: true,
                 signedAt: true,
                 ip: true,
                 userAgent: true,
             },
-            orderBy: { slot: "asc" },
         });
 
-        return noStore(
-            NextResponse.json({
-                user,
-                collected: sigs.length,
-                slots: sigs.map((s) => s.slot),
-                signatures: sigs,
-            })
-        );
-    } catch (e: any) {
-        console.error("admin/[token] GET error:", e);
-        return noStore(
-            NextResponse.json({ error: "Server error" }, { status: 500 })
+        const slots = Array.from(new Set(sigs.map((s) => s.slot))).sort((a, b) => a - b);
+
+        return NextResponse.json({
+            user,
+            collected: sigs.length,
+            slots,
+            signatures: sigs,
+        });
+    } catch (err: any) {
+        console.error("[admin token GET] error:", err);
+        return NextResponse.json(
+            { error: "Internal error", detail: err?.message },
+            { status: 500 }
         );
     }
 }
 
-/** DELETE: remove ALL signatures for this token */
 export async function DELETE(
-    _req: NextRequest,
+    _req: Request,
     ctx: { params: Promise<{ token: string }> }
 ) {
     try {
         const { token } = await ctx.params;
+        if (!token) {
+            return NextResponse.json({ error: "Missing token" }, { status: 400 });
+        }
 
-        const user = await prisma.user.findUnique({
+        const user = await prisma.user.findFirst({
             where: { sign_token: token },
             select: { id: true },
         });
 
         if (!user) {
-            return noStore(
-                NextResponse.json({ error: "Not found" }, { status: 404 })
-            );
+            return NextResponse.json({ error: "Not found" }, { status: 404 });
         }
 
         await prisma.signature.deleteMany({ where: { userId: user.id } });
-
-        return noStore(NextResponse.json({ ok: true, deleted: true }));
-    } catch (e: any) {
-        console.error("admin/[token] DELETE error:", e);
-        return noStore(
-            NextResponse.json({ error: "Server error" }, { status: 500 })
+        return NextResponse.json({ ok: true });
+    } catch (err: any) {
+        console.error("[admin token DELETE] error:", err);
+        return NextResponse.json(
+            { error: "Internal error", detail: err?.message },
+            { status: 500 }
         );
     }
 }
