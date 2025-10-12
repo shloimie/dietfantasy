@@ -253,9 +253,45 @@ export default function DriverDetailPage() {
                                         </div>
 
                                         <div className="kv">
-                                            <div className="address-line">
-                                                <MapPin className="i16" />
-                                                <span className="addr-text"> {s.address}, {s.city}, {s.state} {s.zip}</span>
+                                            <div className="address-line" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                <MapPin
+                                                    className="i22"
+                                                    style={{
+                                                        width: 22,
+                                                        height: 22,
+                                                        color: "var(--brand)", // driver color
+                                                        flexShrink: 0,
+                                                    }}
+                                                />
+                                                {(() => {
+                                                    const unit =
+                                                        s.apt ??
+                                                        s.unit ??
+                                                        s.apartment ??
+                                                        s.suite ??
+                                                        s.flat ??
+                                                        s.unitNumber ??
+                                                        null;
+
+                                                    return (
+                                                        <span className="addr-text" style={{ lineHeight: 1.4, fontSize: 15 }}>
+        {s.address}
+                                                            {unit && (
+                                                                <span
+                                                                    style={{
+                                                                        color: "var(--brand)",
+                                                                        fontWeight: 700,
+                                                                        fontSize: "1.05em",
+                                                                        marginLeft: 4,
+                                                                    }}
+                                                                >
+            (Unit {unit})
+          </span>
+                                                            )}
+                                                            , {s.city}, {s.state} {s.zip}
+      </span>
+                                                    );
+                                                })()}
                                             </div>
 
                                             {s.phone && (
@@ -347,7 +383,7 @@ export default function DriverDetailPage() {
                                                 } catch (err) {
                                                     console.error("setStopCompleted error", err);
                                                     // optional: toast error
-                                                } finally {
+                                                    address-line                                       } finally {
                                                     setCompletingId(null); // button spinner off either way
                                                 }
                                             }}
@@ -499,6 +535,10 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
   .btn.block{ width: 100%; }
   .card-content{ padding-right: 14px; }
   .title2{ max-width: 100%; }
+}.i22 {
+  width: 22px;
+  height: 22px;
+  vertical-align: middle;
 }
           `,
                 }}

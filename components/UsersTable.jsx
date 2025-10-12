@@ -31,7 +31,7 @@ export default function UsersTable({
                     console.error(`Failed to fetch signatures: ${res.status}`);
                     return;
                 }
-                const rows = await res.json(); // [{ userId, collected }]
+                const rows = await res.json(); // [{ userId, collected }] or Prisma _count
                 if (cancelled) return;
                 const map = {};
                 for (const r of rows) map[r.userId] = r._count?.userId ?? r.collected ?? 0;
@@ -47,7 +47,6 @@ export default function UsersTable({
 
     // Replace getToken with this robust version
     const getToken = async (u) => {
-        // 1) Try any cached / already-present token on the user
         const existing =
             tokenPatch[u.id] ??
             u.signToken ??
@@ -60,10 +59,8 @@ export default function UsersTable({
             return existing;
         }
 
-        // 2) Try to fetch/ensure a token (handle both old/new API shapes)
         setLoadingUsers((prev) => ({ ...prev, [u.id]: true }));
         try {
-            // First attempt: legacy path-param endpoint
             const tryLegacy = async () => {
                 const res = await fetch(`/api/signatures/ensure-token/${u.id}`, {
                     method: "POST",
@@ -81,7 +78,6 @@ export default function UsersTable({
                 return token;
             };
 
-            // Second attempt: body-based endpoint
             const tryBody = async () => {
                 const res = await fetch(`/api/signatures/ensure-token`, {
                     method: "POST",
@@ -122,8 +118,6 @@ export default function UsersTable({
         ? users.filter((u) => (u.lat ?? u.latitude) != null && (u.lng ?? u.longitude) != null).length
         : 0;
 
-    // ---- Columns ----
-
     const signColumn = {
         key: "signatures",
         label: "SIGN",
@@ -133,7 +127,6 @@ export default function UsersTable({
             const isCopied = copiedUsers[u.id] || false;
             const isLoading = loadingUsers[u.id] || false;
 
-            // Inside signColumn.render, replace handleClick with this version
             const handleClick = async () => {
                 console.log(`[DEBUG] Clicked SIGN for user ${u.id}`);
                 if (isLoading) return;
@@ -148,7 +141,6 @@ export default function UsersTable({
 
                 const base = `${window.location.origin}/sign/${token}`;
                 if (done) {
-                    // Prefer /view, but fall back to plain page if it 404s
                     const viewerUrl = `${base}/view`;
                     try {
                         const head = await fetch(viewerUrl, { method: "HEAD" });
@@ -160,7 +152,6 @@ export default function UsersTable({
                         window.open(base, "_blank", "noopener,noreferrer");
                     }
                 } else {
-                    // Copy the public link
                     try {
                         await navigator.clipboard.writeText(base);
                         setCopiedUsers((prev) => ({ ...prev, [u.id]: true }));
@@ -210,7 +201,6 @@ export default function UsersTable({
         },
     };
 
-    // Base columns (always visible) — SIGN goes right after LAST
     const baseColumns = [
         { key: "first", label: "FIRST", render: (u) => u.first ?? "" },
         { key: "last", label: "LAST", render: (u) => u.last ?? "" },
@@ -242,7 +232,6 @@ export default function UsersTable({
         },
     ];
 
-    // Detail columns (only when showDetails = true)
     const detailColumns = [
         { key: "county", label: "COUNTY", render: (u) => u.county ?? "" },
         { key: "zip", label: "ZIP", render: (u) => u.zip ?? "" },
@@ -273,6 +262,31 @@ export default function UsersTable({
 
     const visibleColumns = showDetails ? [...baseColumns, ...detailColumns] : baseColumns;
 
+    // === NEW: local sorting for the SIGN column ===
+    const renderedUsers = React.useMemo(() => {
+        if (!Array.isArray(users)) return [];
+        if (sortKey !== "signatures") return users;
+
+        const getCount = (u) => Number(sigCount[u.id] ?? 0);
+        const cmp = (a, b) => {
+            const ca = getCount(a);
+            const cb = getCount(b);
+            // 1) Has any signatures first
+            const aHas = ca > 0 ? 1 : 0;
+            const bHas = cb > 0 ? 1 : 0;
+            if (aHas !== bHas) return bHas - aHas; // true (1) before false (0)
+            // 2) Then by count (desc)
+            if (ca !== cb) return cb - ca;
+            // 3) Then by last, then first (asc) for stable UX
+            const lastCmp = String(a.last ?? "").localeCompare(String(b.last ?? ""), undefined, { sensitivity: "base" });
+            if (lastCmp) return lastCmp;
+            return String(a.first ?? "").localeCompare(String(b.first ?? ""), undefined, { sensitivity: "base" });
+        };
+
+        const arr = [...users].sort(cmp);
+        return sortAsc ? arr.reverse() : arr; // because cmp is desc on counts by default
+    }, [users, sigCount, sortKey, sortAsc]);
+
     return (
         <table
             border="1"
@@ -297,7 +311,7 @@ export default function UsersTable({
             </tr>
             </thead>
             <tbody>
-            {users.map((u, i) => (
+            {(sortKey === "signatures" ? renderedUsers : users).map((u, i) => (
                 <tr key={u.id} style={{ verticalAlign: "top", margin: 0 }}>
                     <td style={{ margin: 0 }}>{i + 1}</td>
                     {visibleColumns.map((c) => (
