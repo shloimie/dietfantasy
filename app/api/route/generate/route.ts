@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { planRoutesByAreaBalanced } from "../../../../utils/routing/areaBalance";
 
-const prisma = new PrismaClient();
+// app/api/route/generate/route.ts
+const prisma = new PrismaClient({
+    log: []  // <- disables all Prisma logs
+});
 
 type Body = { day?: string; driverCount?: number; useDietFantasyStart?: boolean };
 
@@ -15,8 +18,8 @@ function normalizeDay(raw?: string | null) {
 
 const PALETTE = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
 
-// Fixed Diet Fantasy origin
-const ORIGIN = { lat: 41.14602684379917, lng: -73.98927105396123 };
+// Hard-coded Diet Fantasy origin (as requested)
+const ORIGIN = { lat: 41.14628538783947, lng: -73.98948195720195 };
 
 function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const R = 3958.7613;
@@ -39,7 +42,9 @@ export async function POST(req: Request) {
         const body = (await req.json()) as Body;
         const day = normalizeDay(body.day);
         const k = Math.max(1, Math.min(20, body.driverCount ?? 6));
-        const useDietFantasyStart = !!body.useDietFantasyStart;
+
+        // Default to TRUE unless explicitly set to false
+        const useDietFantasyStart = body.useDietFantasyStart !== false;
 
         // 0) Pull geocoded stops for this day (or all)
         const stops = await prisma.stop.findMany({
@@ -56,6 +61,7 @@ export async function POST(req: Request) {
                 ok: true,
                 routes: [],
                 appliedStartRotation: false,
+                origin: ORIGIN,
                 message: "No geocoded stops.",
             });
         }
@@ -97,7 +103,6 @@ export async function POST(req: Request) {
             const ids = plan[i].stopIds;
 
             if (ids.length > 0) {
-                // Use the callback overload so timeout is allowed
                 await prisma.$transaction(
                     async (tx) => {
                         await Promise.all(
@@ -109,7 +114,7 @@ export async function POST(req: Request) {
                             )
                         );
                     },
-                    { timeout: 60_000 } // valid on callback overload
+                    { timeout: 60_000 }
                 );
             }
 
@@ -123,13 +128,11 @@ export async function POST(req: Request) {
         const usedIds = new Set(drivers.slice(0, plan.length).map((d) => d.id));
         const usedIdsArr = Array.from(usedIds);
 
-        // First clear them (in case UI fetches before delete finishes)
         await prisma.driver.updateMany({
             where: { ...(day === "all" ? {} : { day }), id: { notIn: usedIdsArr } },
             data: { stopIds: [] as unknown as Prisma.InputJsonValue },
         });
 
-        // Then permanently delete unused drivers
         await prisma.driver.deleteMany({
             where: { ...(day === "all" ? {} : { day }), id: { notIn: usedIdsArr } },
         });
@@ -145,7 +148,6 @@ export async function POST(req: Request) {
                     select: { stopIds: true },
                 });
 
-                // Guard + coerce JSON to number[]
                 const ids: number[] = Array.isArray(current?.stopIds)
                     ? (current!.stopIds as Array<number | string | null>)
                         .map((v) => (v == null ? NaN : Number(v)))
@@ -177,7 +179,6 @@ export async function POST(req: Request) {
 
                 const rotatedIds = rotateAtIndex(ids, bestIdx);
 
-                // Persist new 1..N Stop.order to match rotatedIds (array overload w/o timeout is fine)
                 await prisma.$transaction(
                     rotatedIds.map((sid, j) =>
                         prisma.stop.update({
@@ -187,7 +188,6 @@ export async function POST(req: Request) {
                     )
                 );
 
-                // Persist on Driver too
                 await prisma.driver.update({
                     where: { id: d.id },
                     data: { stopIds: rotatedIds as unknown as Prisma.InputJsonValue },
@@ -199,6 +199,7 @@ export async function POST(req: Request) {
         return NextResponse.json({
             ok: true,
             appliedStartRotation: useDietFantasyStart,
+            origin: ORIGIN,
             routes: plan.map((r, i) => ({
                 driverId: drivers[i].id,
                 driverName: drivers[i].name,

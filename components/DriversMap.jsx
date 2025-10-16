@@ -9,7 +9,6 @@ const FALLBACK_COLORS = [
     "#bcbd22", "#17becf",
 ];
 
-// Normalize {lat,lng} | {latitude,longitude}
 function normPoint(p) {
     if (!p) return null;
     const lat = Number(p.lat ?? p.latitude);
@@ -18,7 +17,6 @@ function normPoint(p) {
     return { ...p, lat, lng };
 }
 
-// Prefer name/fullName, else first+last, else address, else "Unnamed"
 function displayName(p = {}) {
     const byName = p.name ?? p.fullName ?? `${p.first ?? ""} ${p.last ?? ""}`.trim();
     if (byName) return byName;
@@ -31,9 +29,9 @@ function displayName(p = {}) {
  *  - routes: Array<Array<Stop>> OR Array<{ stops: Stop[], color?: string, driverName?: string }>
  *  - unrouted: Stop[]
  *  - onClose?: () => void
- *  - driverColors?: string[] (optional override per route)
- *  - optimizeDay?: string ("monday"..."sunday" or "all")  // optional, defaults to "all"
- *  - onAfterOptimize?: () => void                         // optional refresh callback
+ *  - driverColors?: string[]
+ *  - optimizeDay?: string ("monday"..."sunday" or "all")
+ *  - onAfterOptimize?: () => void
  */
 export default function DriversMap({
                                        routes = [],
@@ -43,7 +41,6 @@ export default function DriversMap({
                                        optimizeDay = "all",
                                        onAfterOptimize,
                                    }) {
-    // Accept either raw stops arrays or objects with .stops
     const normalizedRoutes = useMemo(() => {
         return (routes || []).map((r, i) => {
             const stops = Array.isArray(r) ? r : (r?.stops || []);
@@ -72,7 +69,6 @@ export default function DriversMap({
     }, [normalizedRoutes, unroutedN]);
 
     useEffect(() => {
-        // quick visibility logs in case you want them
         // console.log("[DriversMap] routes sizes:", normalizedRoutes.map(r => r.stops.length));
         // console.log("[DriversMap] unrouted:", unroutedN.length);
     }, [normalizedRoutes, unroutedN]);
@@ -102,6 +98,22 @@ export default function DriversMap({
     const [popup, setPopup] = useState(null);
     const closePopup = () => setPopup(null);
 
+    const [startAtDietFantasy, setStartAtDietFantasy] = useState(() => {
+        // persist preference per user; default to true
+        try {
+            const saved = localStorage.getItem("startAtDietFantasy");
+            return saved == null ? true : saved === "true";
+        } catch {
+            return true;
+        }
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem("startAtDietFantasy", String(startAtDietFantasy));
+        } catch {}
+    }, [startAtDietFantasy]);
+
     function openPopup(p, color, driverIdx = null, stopIdx = null) {
         const name = displayName(p);
         const addr1 = `${p.address ?? ""}${p.apt ? " " + p.apt : ""}`.trim();
@@ -126,25 +138,7 @@ export default function DriversMap({
         openPopup(firstPoint, firstRoute?.color || "#000", 0, 0);
     }
 
-    async function copyAddress(text) {
-        try {
-            await navigator.clipboard.writeText(text);
-        } catch {}
-    }
-
-    function openInGoogleMaps(lat, lng, addrText) {
-        const url = addrText
-            ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrText)}`
-            : `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-        window.open(url, "_blank", "noopener,noreferrer");
-    }
-
-    // Optimize handler with alerts (always visible)
     async function handleOptimize() {
-        console.log("Optimizeing");
-        // alert("Optimizing routes…");
-
-        const useDietFantasyStart = window.confirm("Leave from Diet Fantasy?");
         const driverCount = Math.max(1, (routes?.length ?? 0) || 1);
 
         try {
@@ -152,9 +146,9 @@ export default function DriversMap({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    day: optimizeDay, // defaults to "all"
+                    day: optimizeDay,
                     driverCount,
-                    useDietFantasyStart, // <— flag your API reads
+                    useDietFantasyStart: startAtDietFantasy, // uses your toggle state
                 }),
             });
 
@@ -165,17 +159,16 @@ export default function DriversMap({
 
             alert(
                 `Routes optimized.\n` +
-                `Applied "Leave from Diet Fantasy": ${data.appliedStartRotation ? "Yes" : "No"}\n` +
+                `Applied "Start at Diet Fantasy": ${data.appliedStartRotation ? "Yes" : "No"}\n` +
                 `${data.message || ""}`
             );
 
-            onAfterOptimize?.(); // let parent refresh UI if provided
+            onAfterOptimize?.();
         } catch (err) {
             alert(`Network/server error: ${err?.message || err}`);
         }
     }
 
-    // Legend items
     const legend = useMemo(
         () =>
             normalizedRoutes.map((r, i) => ({
@@ -192,7 +185,7 @@ export default function DriversMap({
             <div
                 style={{
                     position: "absolute",
-                    zIndex: 9999, // ensure above map canvas
+                    zIndex: 9999,
                     top: 12,
                     right: 12,
                     background: "rgba(255,255,255,0.96)",
@@ -210,7 +203,7 @@ export default function DriversMap({
                 <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>Driver Index</div>
 
-                    {/* Optimize routes button */}
+                    {/* Optimize routes */}
                     <button
                         type="button"
                         onClick={(e) => {
@@ -248,6 +241,19 @@ export default function DriversMap({
                     >
                         ×
                     </button>
+                </div>
+
+                {/* Start-at-DF toggle */}
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <input
+                        type="checkbox"
+                        checked={startAtDietFantasy}
+                        onChange={(e) => setStartAtDietFantasy(e.target.checked)}
+                    />
+                    <span>Start at Diet Fantasy</span>
+                </label>
+                <div style={{ fontSize: 11, opacity: 0.7, marginTop: -4, marginBottom: 8 }}>
+                    (41.14628538783947, -73.98948195720195)
                 </div>
 
                 <div style={{ maxHeight: 180, overflowY: "auto", paddingRight: 4 }}>
@@ -309,11 +315,8 @@ export default function DriversMap({
                 defaultCenter={center}
                 defaultZoom={zoom}
                 height={520}
-                onClick={() => {
-                    setPopup(null);
-                }}
+                onClick={() => setPopup(null)}
             >
-                {/* Driver markers */}
                 {normalizedRoutes.map((route, i) =>
                     route.stops.map((p, idx) => (
                         <Marker
@@ -329,7 +332,6 @@ export default function DriversMap({
                     ))
                 )}
 
-                {/* Unrouted markers (gray) */}
                 {unroutedN.map((u, i) => (
                     <Marker
                         key={`u-${u.id ?? i}`}
@@ -343,10 +345,8 @@ export default function DriversMap({
                     />
                 ))}
 
-                {/* Popup */}
                 {popup && (
                     <Overlay anchor={[popup.lat, popup.lng]} offset={[0, 0]}>
-                        {/* Keep your existing popup JSX here if you use it */}
                         <div />
                     </Overlay>
                 )}
