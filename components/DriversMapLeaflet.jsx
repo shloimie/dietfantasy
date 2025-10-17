@@ -12,7 +12,6 @@ import {
     MapContainer,
     TileLayer,
     Marker,
-    Popup,
     ZoomControl,
     useMap,
     CircleMarker,
@@ -21,60 +20,73 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-/* ==================== Debug ==================== */
+/* ==================== Utils ==================== */
 const DEBUG = false;
-const dlog = (...args) => { if (DEBUG) console.log("[DriversMap]", ...args); };
-
-/* ==================== Helpers ==================== */
-
-function sid(v) { try { return v == null ? "" : String(v); } catch { return ""; } }
-
-function asLeafletMarker(maybe) {
+const dlog = (...a) => DEBUG && console.log("[DriversMap]", ...a);
+const sid = (v) => { try { return v == null ? "" : String(v); } catch { return ""; } };
+const toNum = (v) => { const n = typeof v === "string" ? parseFloat(v) : v; return Number.isFinite(n) ? n : null; };
+const getLL = (s) => {
+    const lat = toNum(s?.lat), lng = toNum(s?.lng);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+};
+const asLeafletMarker = (maybe) => {
     if (!maybe) return null;
     if (typeof maybe.getLatLng === "function") return maybe;
     if (maybe.leafletElement?.getLatLng) return maybe.leafletElement;
     if (maybe.marker?.getLatLng) return maybe.marker;
     return null;
-}
+};
 
-function makePinIcon(color = "#1f77b4") {
+/* ---- Icons ---- */
+const iconCache = new Map();
+const iconKey = (color, selected) => `${color}|${selected ? "sel" : "norm"}`;
+function makePinIcon(color = "#1f77b4", selected = false) {
+    const k = iconKey(color, selected);
+    const cached = iconCache.get(k);
+    if (cached) return cached;
+
+    const fill = selected ? "#ebf707" : color;
+    const stroke = selected ? "rgba(0,0,0,0.8)" : "rgba(0,0,0,0.4)";
+    const ring = selected
+        ? `<circle cx="14" cy="13" r="8" fill="none" stroke="rgba(255,107,0,0.6)" stroke-width="3"></circle>`
+        : "";
+
     const html = `
     <div style="position:relative; width:28px; height:42px; transform: translate(-50%, -100%);">
       <svg width="28" height="42" viewBox="0 0 28 42" xmlns="http://www.w3.org/2000/svg" style="display:block">
-        <path d="M14 0C6.82 0 1 5.82 1 13c0 9.6 10.3 18.1 12.2 19.67a1 1 0 0 0 1.6 0C16.7 31.1 27 22.6 27 13 27 5.82 21.18 0 14 0z" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>
+        ${ring}
+        <path d="M14 0C6.82 0 1 5.82 1 13c0 9.6 10.3 18.1 12.2 19.67a1 1 0 0 0 1.6 0C16.7 31.1 27 22.6 27 13 27 5.82 21.18 0 14 0z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
         <circle cx="14" cy="13" r="4.5" fill="white"/>
       </svg>
       <div style="position:absolute; left:50%; bottom:-4px; transform:translateX(-50%); width:16px; height:6px; border-radius:50%; background:rgba(0,0,0,0.25); filter: blur(1px);"></div>
     </div>
   `;
-    return L.divIcon({
+    const icon = L.divIcon({
         html,
         className: "pin-icon",
         iconSize: [28, 42],
         iconAnchor: [14, 40],
         popupAnchor: [0, -36],
     });
+    iconCache.set(k, icon);
+    return icon;
 }
 
+/* ---- Data helpers ---- */
 function findStopByIdLocal(id, drivers, unrouted) {
     const key = sid(id);
-    for (const d of drivers) {
-        for (const s of d.stops || []) {
-            if (sid(s.id) === key) return { stop: s, color: d.color || "#1f77b4", fromDriverId: d.driverId };
-        }
+    for (const d of drivers) for (const s of d.stops || []) {
+        if (sid(s.id) === key) return { stop: s, color: d.color || "#1f77b4", fromDriverId: d.driverId };
     }
-    for (const s of unrouted || []) {
-        if (sid(s.id) === key) return { stop: s, color: "#666", fromDriverId: null };
-    }
+    for (const s of unrouted || []) if (sid(s.id) === key) return { stop: s, color: "#666", fromDriverId: null };
     return { stop: null, color: "#666", fromDriverId: null };
 }
 
-/* ---- Map view persistence ---- */
-const VIEW_KEY = "driversMap:view"; // sessionStorage {lat,lng,zoom}
+/* ---- View persistence ---- */
+const VIEW_KEY = "driversMap:view";
 function saveView(map) {
     try {
-        const c = map.getCenter();
-        const z = map.getZoom();
+        const c = map.getCenter(), z = map.getZoom();
         sessionStorage.setItem(VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
     } catch {}
 }
@@ -95,8 +107,87 @@ function MapBridge({ onReady }) {
     return null;
 }
 
-/* ==================== Component ==================== */
+/* ---- Programmatic popup ---- */
+function openAssignPopup({ map, stop, color, drivers, onAssign }) {
+    if (!map || !stop) return;
+    const ll = getLL(stop);
+    if (!ll) return;
+    const container = document.createElement("div");
+    container.style.minWidth = "240px";
+    container.style.border = `3px solid ${color}`;
+    container.style.borderRadius = "10px";
+    container.style.padding = "6px";
+    container.style.boxShadow = "0 6px 24px rgba(0,0,0,0.15)";
+    container.innerHTML = `
+    <div style="font-weight:700">${stop.name || "Unnamed"}</div>
+    <div>${stop.address || ""}${stop.apt ? " " + stop.apt : ""}</div>
+    <div>${stop.city || ""} ${stop.state || ""} ${stop.zip || ""}</div>
+    ${stop.phone ? `<div style="margin-top:4px">${stop.phone}</div>` : ""}
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <label style="font-size:12px">Assign to:</label>
+      <select id="__assignSel" style="padding:4px 6px;border-radius:6px;border:1px solid #ccc"></select>
+    </div>
+  `;
+    const sel = container.querySelector("#__assignSel");
+    const o0 = document.createElement("option");
+    o0.value = ""; o0.textContent = "Select driver…"; o0.disabled = true; o0.selected = true;
+    sel.appendChild(o0);
+    for (const d of drivers) {
+        const o = document.createElement("option");
+        o.value = String(d.driverId); o.textContent = d.name;
+        sel.appendChild(o);
+    }
+    sel.addEventListener("change", () => {
+        const to = Number(sel.value);
+        if (Number.isFinite(to)) onAssign?.(stop, to);
+    });
+    L.popup({ closeOnClick: true, autoClose: true, className: "color-popup" })
+        .setLatLng(ll)
+        .setContent(container)
+        .openOn(map);
+}
 
+/* ---- Nice checkbox row ---- */
+function CheckRow({ id, checked, onChange, label, title }) {
+    const selected = !!checked;
+    return (
+        <label
+            htmlFor={id}
+            title={title}
+            style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontSize: 13,
+                userSelect: "none",
+                cursor: "pointer",
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: selected ? "1px solid #99c2ff" : "1px solid #e5e7eb",
+                background: selected ? "#eef5ff" : "#fff",
+                color: selected ? "#0b66ff" : "#111827",
+                transition: "background 120ms, color 120ms, border 120ms",
+            }}
+        >
+            <input
+                id={id}
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange?.(e.target.checked)}
+                style={{
+                    width: 18,
+                    height: 18,
+                    transform: "scale(1.25)",
+                    accentColor: "#0b66ff",
+                    cursor: "pointer",
+                }}
+            />
+            <span style={{ lineHeight: 1 }}>{label}</span>
+        </label>
+    );
+}
+
+/* ==================== Component ==================== */
 export default function DriversMapLeaflet({
                                               drivers = [],
                                               unrouted = [],
@@ -108,43 +199,49 @@ export default function DriversMapLeaflet({
                                           }) {
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
+    const [didFitOnce, setDidFitOnce] = useState(false);
     const pendingOpenIdRef = useRef(null);
 
-    // keep latest server-call refs
     const onReassignRef = useRef(onReassign);
     const onReassignBulkRef = useRef(onReassignBulk);
     useEffect(() => { onReassignRef.current = onReassign; }, [onReassign]);
     useEffect(() => { onReassignBulkRef.current = onReassignBulk; }, [onReassignBulk]);
 
-    /* ------- Local copies so UI updates without parent refresh ------- */
-    const [localDrivers, setLocalDrivers] = useState(drivers);
-    const [localUnrouted, setLocalUnrouted] = useState(unrouted);
+    /* ------- Local copies for immediate UI ------- */
+    const [localDrivers, setLocalDrivers] = useState(drivers || []);
+    const [localUnrouted, setLocalUnrouted] = useState(unrouted || []);
     const localDriversRef = useRef(localDrivers);
     const localUnroutedRef = useRef(localUnrouted);
     useEffect(() => { localDriversRef.current = localDrivers; }, [localDrivers]);
     useEffect(() => { localUnroutedRef.current = localUnrouted; }, [localUnrouted]);
 
-    // initialize once; ignore later prop changes
     const didInitLocalRef = useRef(false);
     useEffect(() => {
         if (!didInitLocalRef.current) {
             didInitLocalRef.current = true;
-            setLocalDrivers(drivers);
-            setLocalUnrouted(unrouted);
+            setLocalDrivers(drivers || []);
+            setLocalUnrouted(unrouted || []);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    /* ------- UI toggles / selection ------- */
+    /* ------- Toggles / selection ------- */
     const [showRouteLines, setShowRouteLines] = useState(false);
-
-    // New: precise drag-rectangle selection (Shift+drag)
-    const [selectMode, setSelectMode] = useState(false);
+    const [selectMode, setSelectMode] = useState(false);       // box select (Shift+drag)
+    const [clickPickMode, setClickPickMode] = useState(false); // click toggles selection
     const [selectedIds, setSelectedIds] = useState(() => new Set());
+    const [hoverIds, setHoverIds] = useState(() => new Set());
     const [bulkBusy, setBulkBusy] = useState(false);
     const selectedCount = selectedIds.size;
 
-    /* ------- Derived from LOCAL state ------- */
+    /* ------- Derived ------- */
+    const allPoints = useMemo(() => {
+        const pts = [];
+        for (const d of localDrivers) for (const s of d.stops || []) { const ll = getLL(s); if (ll) pts.push(ll); }
+        for (const s of localUnrouted) { const ll = getLL(s); if (ll) pts.push(ll); }
+        return pts;
+    }, [localDrivers, localUnrouted]);
+
     const assignedIdSet = useMemo(() => {
         const set = new Set();
         for (const d of localDrivers) for (const s of d.stops || []) set.add(sid(s.id));
@@ -164,7 +261,14 @@ export default function DriversMapLeaflet({
     );
     const totalAssigned = useMemo(() => indexItems.reduce((s, x) => s + x.count, 0), [indexItems]);
 
-    /* ------- Marker refs for fly-to and popups ------- */
+    const idBaseColor = useMemo(() => {
+        const m = new Map();
+        for (const d of localDrivers) for (const s of d.stops || []) m.set(sid(s.id), d.color || "#1f77b4");
+        for (const s of localUnrouted) m.set(sid(s.id), "#666");
+        return m;
+    }, [localDrivers, localUnrouted]);
+
+    /* ------- Marker refs ------- */
     const assignedMarkerRefs = useRef(new Map());
     const unroutedMarkerRefs = useRef(new Map());
     useEffect(() => {
@@ -172,18 +276,19 @@ export default function DriversMapLeaflet({
         unroutedMarkerRefs.current = new Map();
     }, [localDrivers, unroutedFiltered]);
 
-    /* ------- Search ------- */
+    /* ------- Search / halo ------- */
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
+    const [selectedId, setSelectedId] = useState("");
+    const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
+
     useEffect(() => {
         const needle = q.trim().toLowerCase();
         if (!needle) { setResults([]); return; }
         const rows = [];
-        for (const d of localDrivers) {
-            for (const s of d.stops || []) {
-                const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
-                if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __unrouted: false });
-            }
+        for (const d of localDrivers) for (const s of d.stops || []) {
+            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
+            if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __unrouted: false });
         }
         for (const s of unroutedFiltered) {
             const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
@@ -191,10 +296,6 @@ export default function DriversMapLeaflet({
         }
         setResults(rows.slice(0, 30));
     }, [q, localDrivers, unroutedFiltered]);
-
-    /* ------- Single-stop focus / popup ------- */
-    const [selectedId, setSelectedId] = useState("");
-    const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
 
     const openById = useCallback((id) => {
         const key = sid(id);
@@ -205,70 +306,26 @@ export default function DriversMapLeaflet({
         const fromUnrouted = unroutedMarkerRefs.current.get(key);
         const marker = fromAssigned || fromUnrouted;
 
+        const dSnap = localDriversRef.current;
+        const uSnap = localUnroutedRef.current;
+        const { stop, color } = findStopByIdLocal(key, dSnap, uSnap);
+        const ll = getLL(stop || {});
+
         if (marker?.getLatLng) {
-            const ll = marker.getLatLng();
-            map.setView(ll, Math.max(map.getZoom(), 15), { animate: true });
-            setSelectedHalo({ lat: ll.lat, lng: ll.lng, color: fromAssigned ? "#1f77b4" : "#666" });
-            setTimeout(() => { try { marker.openPopup?.(); } catch {} }, 60);
+            const llm = marker.getLatLng();
+            map.setView(llm, Math.max(map.getZoom(), 15), { animate: true });
+            setSelectedHalo({ lat: llm.lat, lng: llm.lng, color: fromAssigned ? (color || "#1f77b4") : "#666" });
+            openAssignPopup({ map, stop, color: fromAssigned ? (color || "#1f77b4") : "#666", drivers: dSnap, onAssign: onReassignLocal });
             return true;
         }
-
-        const { stop, color } = findStopByIdLocal(key, localDriversRef.current, localUnroutedRef.current);
-        if (stop && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)) {
-            map.setView([stop.lat, stop.lng], Math.max(map.getZoom(), 15), { animate: true });
-            setSelectedHalo({ lat: stop.lat, lng: stop.lng, color });
-
-            // quick popup with select (uses latest drivers via ref)
-            const container = document.createElement("div");
-            container.style.minWidth = "240px";
-            container.style.border = `3px solid ${color}`;
-            container.style.borderRadius = "10px";
-            container.style.padding = "6px";
-            container.style.boxShadow = "0 6px 24px rgba(0,0,0,0.15)";
-            container.innerHTML = `
-        <div style="font-weight:700">${stop.name || "Unnamed"}</div>
-        <div>${stop.address || ""}${stop.apt ? " " + stop.apt : ""}</div>
-        <div>${stop.city || ""} ${stop.state || ""} ${stop.zip || ""}</div>
-        ${stop.phone ? `<div style="margin-top:4px">${stop.phone}</div>` : ""}
-        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-          <label style="font-size:12px">Assign to:</label>
-          <select id="__assignSel" style="padding:4px 6px;border-radius:6px;border:1px solid #ccc"></select>
-        </div>
-      `;
-            const selEl = container.querySelector("#__assignSel");
-            const o0 = document.createElement("option");
-            o0.value = ""; o0.textContent = "Select driver…"; o0.disabled = true; o0.selected = true;
-            selEl.appendChild(o0);
-            for (const d of localDriversRef.current) {
-                const o = document.createElement("option");
-                o.value = String(d.driverId);
-                o.textContent = d.name;
-                selEl.appendChild(o);
-            }
-            selEl.addEventListener("change", async () => {
-                const to = Number(selEl.value);
-                if (Number.isFinite(to)) await onReassignLocal(stop, to);
-            });
-
-            L.popup({ closeOnClick: true, autoClose: true, className: "color-popup" })
-                .setLatLng([stop.lat, stop.lng])
-                .setContent(container)
-                .openOn(map);
+        if (ll) {
+            map.setView(ll, Math.max(map.getZoom(), 15), { animate: true });
+            setSelectedHalo({ lat: ll[0], lng: ll[1], color });
+            openAssignPopup({ map, stop, color, drivers: dSnap, onAssign: onReassignLocal });
             return true;
         }
         return false;
     }, []);
-
-    useEffect(() => {
-        if (!selectedId || !mapReady) return;
-        let tries = 0;
-        const tryOpen = () => {
-            tries++;
-            const ok = openById(selectedId);
-            if (!ok && tries < 3) setTimeout(tryOpen, 120);
-        };
-        tryOpen();
-    }, [selectedId, mapReady, openById]);
 
     const onSearchKeyDown = useCallback((e) => {
         if (e.key === "Enter" && results.length > 0) {
@@ -278,20 +335,16 @@ export default function DriversMapLeaflet({
         }
     }, [results, openById]);
 
-    /* ------- Map ready + persist view ------- */
+    /* ------- Map ready / view ------- */
     const handleMapReady = useCallback((m) => {
         mapRef.current = m;
-
         const saved = loadView();
         if (saved) m.setView([saved.lat, saved.lng], saved.zoom, { animate: false });
         else m.setView(initialCenter, initialZoom, { animate: false });
-
         const onMoveEnd = () => saveView(m);
         m.on("moveend", onMoveEnd);
         m.on("zoomend", onMoveEnd);
-
         setMapReady(true);
-
         if (pendingOpenIdRef.current) {
             const k = pendingOpenIdRef.current;
             pendingOpenIdRef.current = null;
@@ -299,35 +352,74 @@ export default function DriversMapLeaflet({
         }
     }, [initialCenter, initialZoom, openById]);
 
-    /* ======== NEW: Pixel-accurate drag rectangle (Shift+drag) ======== */
+    // Fit once (no saved view)
+    useEffect(() => {
+        if (!mapReady || didFitOnce) return;
+        const saved = loadView();
+        if (saved) { setDidFitOnce(true); return; }
+        if (!allPoints.length) return;
+        try {
+            const b = L.latLngBounds(allPoints);
+            mapRef.current.fitBounds(b, { padding: [50, 50] });
+            setDidFitOnce(true);
+        } catch {}
+    }, [mapReady, didFitOnce, allPoints]);
+
+    /* ======== Box select (DOM-rect intersection) ======== */
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
         const container = map.getContainer();
         if (!container) return;
 
-        let start = null;           // {x,y}
-        let overlay = null;         // DOM div
-        const HIT_RADIUS = 25;      // pixels around pin point
-        let draggingDisabled = false;
+        let startClient = null;
+        let overlay = null;
+        let locked = false;
 
-        function toPoint(e) {
-            // pageX/pageY to container-local coords
-            const rect = container.getBoundingClientRect();
-            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        }
+        const lockMap = () => {
+            if (locked) return;
+            map.dragging.disable();
+            map.touchZoom.disable();
+            map.doubleClickZoom.disable();
+            map.scrollWheelZoom.disable();
+            map.boxZoom.disable();
+            map.keyboard.disable();
+            locked = true;
+        };
+        const unlockMap = () => {
+            if (!locked) return;
+            map.dragging.enable();
+            map.touchZoom.enable();
+            map.doubleClickZoom.enable();
+            map.scrollWheelZoom.enable();
+            map.boxZoom.enable();
+            map.keyboard.enable();
+            locked = false;
+        };
+
+        const rectFromPoints = (a, b) => ({
+            x1: Math.min(a.x, b.x),
+            y1: Math.min(a.y, b.y),
+            x2: Math.max(a.x, b.x),
+            y2: Math.max(a.y, b.y),
+        });
+        const intersects = (r1, r2, pad = 0) =>
+            !(
+                r2.x1 > r1.x2 + pad || r2.x2 < r1.x1 - pad ||
+                r2.y1 > r1.y2 + pad || r2.y2 < r1.y1 - pad
+            );
 
         function onMouseDown(e) {
             if (!selectMode || !e.shiftKey || e.button !== 0) return;
-            // prevent starting from UI overlay clicks
-            if (e.target.closest(".leaflet-control") || e.target.closest(".leaflet-popup")) return;
+            if (e.target.closest(".leaflet-control")) return;
 
-            start = toPoint(e);
-            // build overlay
+            startClient = { x: e.clientX, y: e.clientY };
+
+            const cRect = container.getBoundingClientRect();
             overlay = document.createElement("div");
             overlay.style.position = "absolute";
-            overlay.style.left = `${start.x}px`;
-            overlay.style.top = `${start.y}px`;
+            overlay.style.left = `${startClient.x - cRect.left}px`;
+            overlay.style.top = `${startClient.y - cRect.top}px`;
             overlay.style.width = "0px";
             overlay.style.height = "0px";
             overlay.style.border = "1.5px dashed rgba(0,120,255,0.9)";
@@ -336,125 +428,102 @@ export default function DriversMapLeaflet({
             overlay.style.zIndex = 999;
             container.appendChild(overlay);
 
-            // freeze map panning while selecting
-            if (map.dragging.enabled()) {
-                map.dragging.disable();
-                draggingDisabled = true;
-            }
-
-            // also stop map clicks/boxzoom from triggering
-            e.preventDefault();
-            e.stopPropagation();
+            lockMap();
+            e.preventDefault(); e.stopPropagation();
+            map.closePopup();
         }
 
         function onMouseMove(e) {
-            if (!start || !overlay) return;
-            const p = toPoint(e);
-            const x1 = Math.min(start.x, p.x);
-            const y1 = Math.min(start.y, p.y);
-            const x2 = Math.max(start.x, p.x);
-            const y2 = Math.max(start.y, p.y);
-            overlay.style.left = `${x1}px`;
-            overlay.style.top = `${y1}px`;
-            overlay.style.width = `${x2 - x1}px`;
-            overlay.style.height = `${y2 - y1}px`;
-        }
+            if (!startClient || !overlay) return;
+            const cRect = container.getBoundingClientRect();
+            const now = { x: e.clientX, y: e.clientY };
+            const rr = rectFromPoints(startClient, now);
+            overlay.style.left = `${rr.x1 - cRect.left}px`;
+            overlay.style.top = `${rr.y1 - cRect.top}px`;
+            overlay.style.width = `${rr.x2 - rr.x1}px`;
+            overlay.style.height = `${rr.y2 - rr.y1}px`;
 
-        function withinRect(px, py, rect, pad = 0) {
-            return (
-                px >= rect.x1 - pad &&
-                px <= rect.x2 + pad &&
-                py >= rect.y1 - pad &&
-                py <= rect.y2 + pad
-            );
+            const picked = new Set();
+            const visit = (mapRefMap) => {
+                mapRefMap.forEach((m, id) => {
+                    const el = m?.getElement?.();
+                    if (!el) return;
+                    const br = el.getBoundingClientRect();
+                    const mr = { x1: br.left, y1: br.top, x2: br.right, y2: br.bottom };
+                    if (intersects(rr, mr, 0)) picked.add(id);
+                });
+            };
+            visit(assignedMarkerRefs.current);
+            visit(unroutedMarkerRefs.current);
+            setHoverIds(picked);
+            e.preventDefault(); e.stopPropagation();
         }
 
         function onMouseUp(e) {
-            if (!start) return;
+            if (!startClient) return;
 
-            const end = toPoint(e);
-            const rect = {
-                x1: Math.min(start.x, end.x),
-                y1: Math.min(start.y, end.y),
-                x2: Math.max(start.x, end.x),
-                y2: Math.max(start.y, end.y),
-            };
+            setHoverIds((prevHover) => {
+                setSelectedIds((prev) => {
+                    const next = new Set(prev);
+                    const subtract = e.altKey || e.metaKey || e.ctrlKey;
+                    prevHover.forEach((id) => subtract ? next.delete(id) : next.add(id));
+                    return next;
+                });
+                return new Set();
+            });
 
-            // Compute selection against CURRENT local data in pixel space
-            const map = mapRef.current;
-            const dSnap = localDriversRef.current;
-            const uSnap = localUnroutedRef.current;
-            const picked = new Set();
-
-            const pickPoint = (lat, lng, id) => {
-                const pt = map.latLngToContainerPoint([lat, lng]);
-                if (withinRect(pt.x, pt.y, rect, HIT_RADIUS)) picked.add(sid(id));
-            };
-
-            for (const d of dSnap) {
-                for (const s of d.stops || []) {
-                    if (Number.isFinite(s.lat) && Number.isFinite(s.lng)) {
-                        pickPoint(s.lat, s.lng, s.id);
-                    }
-                }
-            }
-            for (const s of uSnap) {
-                if (Number.isFinite(s.lat) && Number.isFinite(s.lng)) {
-                    pickPoint(s.lat, s.lng, s.id);
-                }
-            }
-
-            setSelectedIds(picked);
-
-            // cleanup
             if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
-            overlay = null;
-            start = null;
-
-            if (draggingDisabled) {
-                map.dragging.enable();
-                draggingDisabled = false;
-            }
-
-            // stop click from bubbling into map
-            e.preventDefault();
-            e.stopPropagation();
+            overlay = null; startClient = null;
+            unlockMap();
+            e.preventDefault(); e.stopPropagation();
         }
 
-        // Attach low-level listeners to the container
         container.addEventListener("mousedown", onMouseDown, true);
         window.addEventListener("mousemove", onMouseMove, true);
         window.addEventListener("mouseup", onMouseUp, true);
-
         return () => {
             container.removeEventListener("mousedown", onMouseDown, true);
             window.removeEventListener("mousemove", onMouseMove, true);
             window.removeEventListener("mouseup", onMouseUp, true);
+            unlockMap();
         };
     }, [selectMode]);
 
-    /* ------- Local moves (single and multi) ------- */
+    /* ======== Live coloring ======== */
+    const prevLiveSetRef = useRef(new Set());
+    const setIconForId = useCallback((id, on) => {
+        const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
+        if (!m) return;
+        const base = idBaseColor.get(id) || "#666";
+        m.setIcon(makePinIcon(base, !!on));
+    }, [idBaseColor]);
+
+    useEffect(() => {
+        const live = new Set([...selectedIds, ...hoverIds]);
+        const prev = prevLiveSetRef.current;
+        live.forEach((id) => { if (!prev.has(id)) setIconForId(id, true); });
+        prev.forEach((id) => { if (!live.has(id)) setIconForId(id, false); });
+        prevLiveSetRef.current = live;
+    }, [selectedIds, hoverIds, setIconForId]);
+
+    /* ------- Local moves ------- */
     const moveStopsLocally = useCallback((stopIds, toDriverId) => {
         const idKeys = new Set(stopIds.map(sid));
         const dSnap = localDriversRef.current;
         const uSnap = localUnroutedRef.current;
 
-        // gather stop objects in original order
         const movingStops = [];
         for (const id of idKeys) {
             const { stop } = findStopByIdLocal(id, dSnap, uSnap);
             if (stop) movingStops.push(stop);
         }
 
-        // strip from drivers
         const strippedDrivers = dSnap.map((d) => ({
             ...d,
             stops: (d.stops || []).filter((s) => !idKeys.has(sid(s.id))),
         }));
-        // strip from unrouted
         const nextUnrouted = uSnap.filter((s) => !idKeys.has(sid(s.id)));
 
-        // append to target driver once
         const nextDrivers = strippedDrivers.map((d) => {
             if (Number(d.driverId) === Number(toDriverId)) {
                 const newStops = Array.isArray(d.stops) ? [...d.stops, ...movingStops.map((s) => ({ ...s }))] : movingStops.map((s) => ({ ...s }));
@@ -471,13 +540,13 @@ export default function DriversMapLeaflet({
 
     const onReassignLocal = useCallback(
         async (stop, toDriverId) => {
-            await onReassignRef.current?.(stop, toDriverId);   // server OK
-            moveStopsLocally([stop.id], toDriverId);           // local update
+            await onReassignRef.current?.(stop, toDriverId);
+            moveStopsLocally([stop.id], toDriverId);
         },
         [moveStopsLocally]
     );
 
-    /* ------- Bulk assign (atomic UI update + auto-reset) ------- */
+    /* ------- Bulk assign ------- */
     const [bulkDriverId, setBulkDriverId] = useState("");
     const applyBulkAssign = useCallback(async () => {
         const to = Number(bulkDriverId);
@@ -487,9 +556,7 @@ export default function DriversMapLeaflet({
         const ids = Array.from(selectedIds);
         const dSnap = localDriversRef.current;
         const uSnap = localUnroutedRef.current;
-        const stops = ids
-            .map((id) => findStopByIdLocal(id, dSnap, uSnap).stop)
-            .filter(Boolean);
+        const stops = ids.map((id) => findStopByIdLocal(id, dSnap, uSnap).stop).filter(Boolean);
 
         try {
             if (onReassignBulkRef.current) {
@@ -499,19 +566,63 @@ export default function DriversMapLeaflet({
             }
             moveStopsLocally(stops.map((s) => s.id), to);
         } finally {
-            // Auto-reset so you're ready for another batch immediately
             setSelectedIds(new Set());
+            setHoverIds(new Set());
             setBulkDriverId("");
             setBulkBusy(false);
+            prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
+            prevLiveSetRef.current = new Set();
         }
-    }, [bulkDriverId, selectedIds, bulkBusy, moveStopsLocally]);
+    }, [bulkDriverId, selectedIds, bulkBusy, moveStopsLocally, setIconForId]);
 
     const clearSelection = useCallback(() => {
+        prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
+        prevLiveSetRef.current = new Set();
         setSelectedIds(new Set());
+        setHoverIds(new Set());
         setBulkDriverId("");
+    }, [setIconForId]);
+
+    /* ------- Toggle helpers & click behavior ------- */
+    const toggleId = useCallback((id, forceOn = null) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (forceOn === true) next.add(id);
+            else if (forceOn === false) next.delete(id);
+            else { next.has(id) ? next.delete(id) : next.add(id); }
+            return next;
+        });
     }, []);
 
-    /* ------- Overlay (selection toolbar pinned on top) ------- */
+    const handleMarkerClick = useCallback((id, stop, baseColor, e) => {
+        const map = mapRef.current;
+        const ev = e?.originalEvent;
+        const modifier = ev?.altKey || ev?.metaKey || ev?.ctrlKey;
+        const isToggle = clickPickMode || modifier;
+
+        if (isToggle) {
+            toggleId(id);
+            map?.closePopup();
+            ev?.preventDefault?.();
+            ev?.stopPropagation?.();
+            return;
+        }
+
+        // Normal click -> open popup programmatically
+        map?.closePopup();
+        openAssignPopup({
+            map,
+            stop,
+            color: baseColor || "#1f77b4",
+            drivers: localDriversRef.current,
+            onAssign: onReassignLocal,
+        });
+
+        const ll = getLL(stop);
+        if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
+    }, [clickPickMode, toggleId, onReassignLocal]);
+
+    /* ------- Overlay UI ------- */
     const overlay = (
         <div
             style={{
@@ -519,15 +630,14 @@ export default function DriversMapLeaflet({
                 zIndex: 1000,
                 left: 10,
                 top: 10,
-                width: 340,
+                width: 360,
                 display: "flex",
                 flexDirection: "column",
                 gap: 10,
                 pointerEvents: "none",
             }}
         >
-            {/* Selection toolbar */}
-            {selectedCount > 0 && (
+            {(selectedCount > 0 || hoverIds.size > 0) && (
                 <div
                     style={{
                         pointerEvents: "auto",
@@ -543,7 +653,7 @@ export default function DriversMapLeaflet({
                     }}
                 >
                     <div style={{ fontWeight: 700, fontSize: 13 }}>
-                        {selectedCount} stop{selectedCount === 1 ? "" : "s"} selected
+                        {selectedCount} selected{hoverIds.size ? ` (+${hoverIds.size} preview)` : ""}
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <label style={{ fontSize: 12 }}>Assign to:</label>
@@ -566,13 +676,13 @@ export default function DriversMapLeaflet({
                         </select>
                         <button
                             onClick={applyBulkAssign}
-                            disabled={!bulkDriverId || bulkBusy}
+                            disabled={!bulkDriverId || bulkBusy || selectedCount === 0}
                             style={{
                                 padding: "8px 10px",
                                 borderRadius: 10,
                                 border: "1px solid #2a7",
-                                background: !bulkDriverId || bulkBusy ? "#f6f6f6" : "#eaffea",
-                                cursor: !bulkDriverId || bulkBusy ? "not-allowed" : "pointer",
+                                background: !bulkDriverId || bulkBusy || selectedCount === 0 ? "#f6f6f6" : "#eaffea",
+                                cursor: !bulkDriverId || bulkBusy || selectedCount === 0 ? "not-allowed" : "pointer",
                                 fontWeight: 600,
                                 whiteSpace: "nowrap",
                             }}
@@ -599,13 +709,15 @@ export default function DriversMapLeaflet({
                             Clear
                         </button>
                     </div>
-                    <div style={{ fontSize: 11, opacity: 0.8 }}>
-                        Tip: keep “Area select” ON and hold <b>Shift</b> to drag a box.
+                    <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
+                        Box: hold <b>Shift</b> and drag (add); hold <b>Alt/Option/Ctrl/Cmd</b> to subtract.
+                        <br />
+                        Click: enable <b>Click to select</b>, or hold <b>Alt/Option/Ctrl/Cmd</b> while clicking.
                     </div>
                 </div>
             )}
 
-            {/* Close button */}
+            {/* Close */}
             <div style={{ pointerEvents: "auto" }}>
                 <button
                     onClick={onClose}
@@ -635,78 +747,45 @@ export default function DriversMapLeaflet({
                     boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
                     overflow: "auto",
                     maxHeight: "45vh",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
                 }}
             >
-                <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
                     Drivers ({totalAssigned} assigned)
                 </div>
 
-                {/* Route lines toggle */}
-                <label
-                    style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 8, userSelect: "none" }}
+                <CheckRow
+                    id="toggle-routes"
+                    checked={showRouteLines}
+                    onChange={setShowRouteLines}
+                    label="Show route lines"
                     title="Draw a line connecting stops in order for each driver"
-                >
-                    <input
-                        type="checkbox"
-                        checked={showRouteLines}
-                        onChange={(e) => setShowRouteLines(e.target.checked)}
-                        style={{ transform: "translateY(1px)" }}
-                    />
-                    Show route lines
-                </label>
+                />
+                <CheckRow
+                    id="toggle-area"
+                    checked={selectMode}
+                    onChange={setSelectMode}
+                    label="Area select (Shift+drag)"
+                    title="Shift-drag to select, Alt/Option/Ctrl/Cmd to subtract"
+                />
+                <CheckRow
+                    id="toggle-click"
+                    checked={clickPickMode}
+                    onChange={setClickPickMode}
+                    label="Click to select (one-by-one)"
+                    title="When ON, clicking a dot toggles selection (no popup)"
+                />
 
-                {/* Area select toggle */}
-                <label
-                    style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 10, userSelect: "none" }}
-                    title="When ON, hold Shift and drag a box to select stops"
-                >
-                    <input
-                        type="checkbox"
-                        checked={selectMode}
-                        onChange={(e) => setSelectMode(e.target.checked)}
-                        style={{ transform: "translateY(1px)" }}
-                    />
-                    Area select (hold <b>Shift</b> & drag)
-                </label>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+                    Unrouted: {unroutedFiltered.length}
+                </div>
 
-                {/* Unrouted jump */}
-                <button
-                    type="button"
-                    onClick={() => {
-                        // next unrouted (simple helper kept from earlier versions)
-                        const list = unroutedFiltered;
-                        if (!list.length) return;
-                        const target = list[0];
-                        const k = sid(target?.id);
-                        if (k) { openById(k); setSelectedId(k); }
-                    }}
-                    style={{
-                        width: "100%", display: "flex", alignItems: "center", gap: 8,
-                        fontSize: 13, padding: "6px 8px", borderRadius: 8, border: "1px solid #eee",
-                        background: "#fff", cursor: unroutedFiltered.length ? "pointer" : "not-allowed",
-                        marginBottom: 8,
-                    }}
-                    title={unroutedFiltered.length ? "Click to jump to an unrouted stop" : "No unrouted"}
-                    disabled={!unroutedFiltered.length}
-                >
-          <span
-              style={{ width: 16, height: 16, borderRadius: 4, background: "#666", border: "1px solid rgba(0,0,0,0.15)", flex: "0 0 auto" }}
-          />
-                    <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        Unrouted
-                    </div>
-                    <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85, paddingLeft: 6 }}>
-                        {unroutedFiltered.length}
-                    </div>
-                </button>
-
-                {/* Drivers list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {indexItems.map((it) => (
                         <div key={it.driverId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              <span
-                  style={{ width: 16, height: 16, borderRadius: 4, background: it.color, border: "1px solid rgba(0,0,0,0.15)", flex: "0 0 auto" }}
-              />
+                            <span style={{ width: 16, height: 16, borderRadius: 4, background: it.color, border: "1px solid rgba(0,0,0,0.15)" }} />
                             <div title={it.name} style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                 {it.name}
                             </div>
@@ -736,54 +815,11 @@ export default function DriversMapLeaflet({
                     placeholder="Search name, address, phone… (Enter opens first)"
                     style={{ width: "100%", height: 36, borderRadius: 8, border: "1px solid #ccc", padding: "0 10px", outline: "none" }}
                 />
-                {results.length > 0 && (
-                    <div style={{ marginTop: 8, maxHeight: 240, overflow: "auto", borderTop: "1px solid #eee", paddingTop: 6 }}>
-                        {results.map((r) => (
-                            <button
-                                key={`res-${sid(r.id)}`}
-                                type="button"
-                                onClick={() => { const k = sid(r.id); openById(k); setSelectedId(k); }}
-                                style={{
-                                    width: "100%",
-                                    textAlign: "left",
-                                    padding: "8px 8px",
-                                    margin: "2px 0",
-                                    borderRadius: 8,
-                                    border: "1px solid #eee",
-                                    background: "#fff",
-                                    cursor: "pointer",
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.background = "#f6f6f6")}
-                                onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
-                            >
-                                <div style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
-                                <div style={{ fontSize: 12, opacity: 0.8 }}>
-                                    {r.address}{r.apt ? ` ${r.apt}` : ""}, {r.city} {r.state} {r.zip}
-                                </div>
-                            </button>
-                        ))}
-                    </div>
-                )}
             </div>
         </div>
     );
 
-    /* ------- Halos for selection ------- */
-    const selectedHalos = useMemo(() => {
-        if (!selectedIds.size) return [];
-        const halos = [];
-        const dSnap = localDriversRef.current;
-        const uSnap = localUnroutedRef.current;
-        for (const id of selectedIds) {
-            const { stop, color } = findStopByIdLocal(id, dSnap, uSnap);
-            if (stop && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)) {
-                halos.push({ id, lat: stop.lat, lng: stop.lng, color });
-            }
-        }
-        return halos;
-    }, [selectedIds]);
-
-    /* ------- Render map ------- */
+    /* ------- Render ------- */
     return (
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
             {overlay}
@@ -799,13 +835,10 @@ export default function DriversMapLeaflet({
                 >
                     <MapBridge onReady={handleMapReady} />
 
-                    <TileLayer
-                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                        attribution="&copy; OpenStreetMap contributors"
-                    />
+                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
                     <ZoomControl position="bottomleft" />
 
-                    {/* single selected halo */}
+                    {/* single-clicked/located halo */}
                     {Number.isFinite(selectedHalo.lat) && Number.isFinite(selectedHalo.lng) && (
                         <CircleMarker
                             center={[selectedHalo.lat, selectedHalo.lng]}
@@ -816,24 +849,10 @@ export default function DriversMapLeaflet({
                         />
                     )}
 
-                    {/* multi-select halos */}
-                    {selectedHalos.map((h) => (
-                        <CircleMarker
-                            key={`sel-${h.id}`}
-                            center={[h.lat, h.lng]}
-                            pathOptions={{ color: h.color, fillColor: h.color, fillOpacity: 0.2 }}
-                            radius={16}
-                            weight={3}
-                            interactive={false}
-                        />
-                    ))}
-
                     {/* route lines */}
                     {showRouteLines &&
                         localDrivers.map((d) => {
-                            const pts = (d.stops || [])
-                                .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
-                                .map((s) => [s.lat, s.lng]);
+                            const pts = (d.stops || []).map(getLL).filter(Boolean);
                             if (pts.length < 2) return null;
                             return (
                                 <Polyline
@@ -845,117 +864,50 @@ export default function DriversMapLeaflet({
                         })
                     }
 
-                    {/* unrouted markers */}
-                    {unroutedFiltered.map((s) =>
-                        Number.isFinite(s.lat) && Number.isFinite(s.lng) ? (
+                    {/* UNROUTED markers (no <Popup> bound) */}
+                    {unroutedFiltered.map((s) => {
+                        const ll = getLL(s); if (!ll) return null;
+                        const id = sid(s.id);
+                        return (
                             <Marker
-                                key={`u-${sid(s.id)}`}
-                                position={[s.lat, s.lng]}
-                                icon={makePinIcon("#666")}
+                                key={`u-${id}`}
+                                position={ll}
+                                icon={makePinIcon("#666", selectedIds.has(id) || hoverIds.has(id))}
                                 ref={(ref) => {
                                     const m = asLeafletMarker(ref);
-                                    if (m) unroutedMarkerRefs.current.set(sid(s.id), m);
+                                    if (m) unroutedMarkerRefs.current.set(id, m);
                                 }}
                                 eventHandlers={{
-                                    popupopen: () => setSelectedHalo({ lat: s.lat, lng: s.lng, color: "#666" }),
+                                    click: (e) => handleMarkerClick(id, s, "#666", e),
                                 }}
-                            >
-                                <Popup className="color-popup" closeButton={true}>
-                                    <div style={{
-                                        minWidth: 240, border: "3px solid #666", borderRadius: 10, padding: 6,
-                                        boxShadow: "0 6px 24px rgba(0,0,0,0.15)"
-                                    }}>
-                                        <div style={{ fontWeight: 700 }}>{s.name || "Unnamed"}</div>
-                                        <div>{s.address}{s.apt ? ` ${s.apt}` : ""}</div>
-                                        <div>{s.city} {s.state} {s.zip}</div>
-                                        {s.phone ? <div style={{ marginTop: 4 }}>{s.phone}</div> : null}
-                                        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-                                            <label style={{ fontSize: 12 }}>Assign to:</label>
-                                            <select
-                                                defaultValue=""
-                                                onChange={async (e) => {
-                                                    const val = Number(e.target.value);
-                                                    if (Number.isFinite(val)) await onReassignLocal(s, val);
-                                                }}
-                                                style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ccc" }}
-                                            >
-                                                <option value="" disabled>Select driver…</option>
-                                                {localDrivers.map((opt) => (
-                                                    <option key={opt.driverId} value={opt.driverId}>{opt.name}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    </div>
-                                </Popup>
-                            </Marker>
-                        ) : null
-                    )}
+                            />
+                        );
+                    })}
 
-                    {/* assigned markers */}
+                    {/* ASSIGNED markers (no <Popup> bound) */}
                     {localDrivers.map((d) =>
-                        (d.stops || []).map((s) =>
-                            Number.isFinite(s.lat) && Number.isFinite(s.lng) ? (
+                        (d.stops || []).map((s) => {
+                            const ll = getLL(s); if (!ll) return null;
+                            const id = sid(s.id);
+                            const base = d.color || "#1f77b4";
+                            return (
                                 <Marker
-                                    key={`d-${sid(d.driverId)}-s-${sid(s.id)}`}
-                                    position={[s.lat, s.lng]}
-                                    icon={makePinIcon(d.color)}
+                                    key={`d-${sid(d.driverId)}-s-${id}`}
+                                    position={ll}
+                                    icon={makePinIcon(base, selectedIds.has(id) || hoverIds.has(id))}
                                     ref={(ref) => {
                                         const m = asLeafletMarker(ref);
-                                        if (m) assignedMarkerRefs.current.set(sid(s.id), m);
+                                        if (m) assignedMarkerRefs.current.set(id, m);
                                     }}
                                     eventHandlers={{
-                                        popupopen: () => setSelectedHalo({ lat: s.lat, lng: s.lng, color: d.color || "#1f77b4" }),
+                                        click: (e) => handleMarkerClick(id, s, base, e),
                                     }}
-                                >
-                                    <Popup className="color-popup">
-                                        <div style={{
-                                            minWidth: 240, border: `3px solid ${d.color || "#1f77b4"}`, borderRadius: 10, padding: 6,
-                                            boxShadow: "0 6px 24px rgba(0,0,0,0.15)"
-                                        }}>
-                                            <div style={{ fontWeight: 700 }}>{s.name || "Unnamed"}</div>
-                                            <div>{s.address}{s.apt ? ` ${s.apt}` : ""}</div>
-                                            <div>{s.city} {s.state} {s.zip}</div>
-                                            {s.phone ? <div style={{ marginTop: 4 }}>{s.phone}</div> : null}
-                                            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-                                                <label style={{ fontSize: 12 }}>Reassign to:</label>
-                                                <select
-                                                    defaultValue={d.driverId}
-                                                    onChange={async (e) => { await onReassignLocal(s, Number(e.target.value)); }}
-                                                    style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ccc" }}
-                                                >
-                                                    {localDrivers.map((opt) => (
-                                                        <option key={opt.driverId} value={opt.driverId}>{opt.name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </Popup>
-                                </Marker>
-                            ) : null
-                        )
+                                />
+                            );
+                        })
                     )}
                 </MapContainer>
             </div>
-
-            {/* tiny hint */}
-            {selectMode && (
-                <div
-                    style={{
-                        position: "absolute",
-                        right: 12,
-                        top: 12,
-                        background: "rgba(0,120,255,0.08)",
-                        border: "1px dashed rgba(0,120,255,0.5)",
-                        color: "#0366d6",
-                        padding: "6px 10px",
-                        borderRadius: 10,
-                        fontSize: 12,
-                        fontWeight: 600,
-                    }}
-                >
-                    Shift+drag to select
-                </div>
-            )}
         </div>
     );
 }
