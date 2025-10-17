@@ -16,6 +16,8 @@ function sanitizeSchedule(input: any) {
     };
 }
 
+const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
 // ---------- GET /api/users
 export async function GET() {
     const list = await prisma.user.findMany({
@@ -35,11 +37,13 @@ export async function GET() {
             medicaid: true,
             paused: true,
             complex: true,
+            // Your UI reads these:
             lat: true,
             lng: true,
-            // ✅ include visits so the PROOF column can read it
+            // If you want to migrate slowly, you can also expose latitude/longitude:
+            // latitude: true,
+            // longitude: true,
             visits: true,
-            // (optional) select only the 7 flags you render
             schedule: {
                 select: {
                     monday: true, tuesday: true, wednesday: true,
@@ -52,15 +56,25 @@ export async function GET() {
     return NextResponse.json(list);
 }
 
-// ---------- POST /api/users (unchanged)
+// ---------- POST /api/users
 export async function POST(req: Request) {
     const b = await req.json();
     const scheduleInput = sanitizeSchedule(b.schedule);
 
-    const { lat, lng } = await geocodeIfNeeded({
-        address: b.address, apt: b.apt, city: b.city, state: b.state, zip: b.zip
-    });
+    // 1) Accept coords from client if provided (supports both name styles)
+    let bodyLat = num(b.lat ?? b.latitude);
+    let bodyLng = num(b.lng ?? b.longitude);
 
+    // 2) If missing, geocode the address
+    if (bodyLat == null || bodyLng == null) {
+        const { lat, lng } = await geocodeIfNeeded({
+            address: b.address, apt: b.apt, city: b.city, state: b.state, zip: b.zip,
+        });
+        bodyLat = num(lat);
+        bodyLng = num(lng);
+    }
+
+    // 3) Create user; write to BOTH field-name styles so UI & table stay in sync
     const created = await prisma.user.create({
         data: {
             first: b.first,
@@ -76,10 +90,16 @@ export async function POST(req: Request) {
             medicaid: !!b.medicaid,
             paused: !!b.paused,
             complex: !!b.complex,
+
             schedule: { create: scheduleInput },
-            latitude: lat,
-            longitude: lng,
-            geocodedAt: lat != null && lng != null ? new Date() : null,
+
+            // ✅ write both styles
+            lat: bodyLat,
+            lng: bodyLng,
+            latitude: bodyLat,
+            longitude: bodyLng,
+
+            geocodedAt: bodyLat != null && bodyLng != null ? new Date() : null,
         },
         include: { schedule: true },
     });

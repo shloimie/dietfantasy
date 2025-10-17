@@ -7,12 +7,10 @@ import {
     Button, Box, Typography, LinearProgress
 } from "@mui/material";
 import Link from "next/link";
-
 import dynamic from "next/dynamic";
 const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: false });
 
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
-
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 
 const palette = [
@@ -27,12 +25,118 @@ const nameOf = (u = {}) => {
     return addr || "Unnamed";
 };
 
+/* ========= local complex detection (no backend) ========= */
+const toBool = (v) => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") {
+        const s = v.trim().toLowerCase();
+        return s === "true" || s === "1" || s === "yes" || s === "y";
+    }
+    return false;
+};
+const displayNameLoose = (u = {}) => {
+    const cands = [
+        u.name,
+        u.fullName,
+        `${u.first ?? ""} ${u.last ?? ""}`.trim(),
+        `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
+        u?.user?.name,
+        `${u?.user?.first ?? ""} ${u?.user?.last ?? ""}`.trim(),
+    ].filter(Boolean);
+    return cands[0] || "";
+};
+const normalize = (s) =>
+    String(s || "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[^\p{L}\p{N}\s]/gu, "")
+        .trim();
+const normalizePhone = (s) => String(s || "").replace(/\D+/g, "").replace(/^1/, "");
+const normalizeAddr = (u = {}) =>
+    normalize([u.address || u.addr || "", u.apt || u.unit || "", u.city || "", u.state || "", u.zip || ""].filter(Boolean).join(", "));
+const llKey = (u) => {
+    const lat = typeof u.lat === "number" ? u.lat : u.latitude;
+    const lng = typeof u.lng === "number" ? u.lng : u.longitude;
+    const lk = Number.isFinite(lat) ? lat.toFixed(4) : "";
+    const gk = Number.isFinite(lng) ? lng.toFixed(4) : "";
+    return `${lk}|${gk}`;
+};
+/** Build an index of complex users from the full users list */
+function buildComplexIndex(users = []) {
+    const idSet = new Set();
+    const nameSet = new Set();
+    const phoneSet = new Set();
+    const addrSet = new Set();
+    const llSet = new Set();
+
+    for (const u of users) {
+        const isCx =
+            toBool(u?.complex) ||
+            toBool(u?.isComplex) ||
+            toBool(u?.flags?.complex) ||
+            toBool(u?.user?.complex) ||
+            toBool(u?.User?.complex) ||
+            toBool(u?.client?.complex);
+        if (!isCx) continue;
+
+        if (u.id != null) idSet.add(String(u.id));
+        const nm = normalize(displayNameLoose(u));
+        if (nm) nameSet.add(nm);
+        const ph = normalizePhone(u.phone);
+        if (ph) phoneSet.add(ph);
+        const ak = normalizeAddr(u);
+        if (ak) addrSet.add(ak);
+        const ll = llKey(u);
+        if (ll !== "|") llSet.add(ll);
+    }
+    return { idSet, nameSet, phoneSet, addrSet, llSet };
+}
+/** Mark a single stop complex if ANY key matches */
+function markStopComplex(stop, idx, idxs) {
+    const s = stop || {};
+    // direct flags first
+    const direct =
+        toBool(s?.complex) ||
+        toBool(s?.isComplex) ||
+        toBool(s?.flags?.complex) ||
+        toBool(s?.user?.complex) ||
+        toBool(s?.User?.complex) ||
+        toBool(s?.client?.complex);
+    if (direct) return { ...s, complex: true, __complexSource: "stop.direct" };
+
+    // id match
+    const ids = [
+        s.userId, s.userID, s.userid, s?.user?.id, s?.User?.id, s?.client?.id, s.id,
+    ].map(v => (v == null ? null : String(v))).filter(Boolean);
+    for (const id of ids) {
+        if (idxs.idSet.has(id)) return { ...s, complex: true, __complexSource: "user.id" };
+    }
+
+    // name/phone/address/latlng
+    const nm = normalize(displayNameLoose(s));
+    if (nm && idxs.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
+
+    const ph = normalizePhone(s.phone || s?.user?.phone);
+    if (ph && idxs.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
+
+    const ak = normalizeAddr(s);
+    if (ak && idxs.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
+
+    const ll = llKey(s);
+    if (ll !== "|" && idxs.llSet.has(ll)) return { ...s, complex: true, __complexSource: "user.latlng" };
+
+    return { ...s, complex: false, __complexSource: "none" };
+}
+/* ======================================================== */
+
 export default function DriversDialog({
                                           open,
                                           onClose,
-                                          users = [],
+                                          users = [],                 // comes from parent
                                           initialDriverCount = 6,
                                           initialSelectedDay = "all",
+                                          onUsersPatched,
                                       }) {
     const [driverCount, setDriverCount] = React.useState(Number(initialDriverCount || 6));
     const [selectedDay] = React.useState(initialSelectedDay || "all");
@@ -42,8 +146,10 @@ export default function DriversDialog({
 
     const [mapOpen, setMapOpen] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
-    const [manualOpen, setManualOpen] = React.useState(false);
+
+    // Manual geocode dialog state
     const [missingBatch, setMissingBatch] = React.useState([]);
+    const [manualOpen, setManualOpen] = React.useState(false);
 
     const hasRoutes = routes.length > 0;
 
@@ -63,47 +169,39 @@ export default function DriversDialog({
 
     React.useEffect(() => {
         if (!open) return;
+        // build the missing list from the *prop* users
         const missing = users.filter(u => (u.lat ?? u.latitude) == null || (u.lng ?? u.longitude) == null);
         setMissingBatch(missing);
         setMapOpen(true);
         loadRoutes();
     }, [open, users, loadRoutes]);
 
-    const handleManualGeocoded = React.useCallback(async (updates) => {
-        if (!Array.isArray(updates) || !updates.length) return;
+    async function handleManualGeocoded(updates) {
         try {
-            const mapById = new Map(users.map(u => [Number(u.id), u]));
-            const newStops = updates.map(u => {
-                const base = mapById.get(Number(u.id));
-                if (!base) return null;
-                return {
-                    userId: base.id,
-                    name: `${base.first ?? ""} ${base.last ?? ""}`.trim(),
-                    address: `${base.address ?? ""}`.trim(),
-                    apt: base.apt ?? null,
-                    city: base.city ?? "",
-                    state: base.state ?? "",
-                    zip: base.zip ?? "",
-                    phone: base.phone ?? null,
-                    dislikes: base.dislikes ?? null,
-                    lat: Number(u.lat),
-                    lng: Number(u.lng),
-                };
-            }).filter(Boolean);
+            await Promise.all(
+                updates.map(({ id, lat, lng, ...rest }) =>
+                    fetch(`/api/users/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            lat,
+                            lng,
+                            cascadeStops: true,
+                            ...rest,
+                        }),
+                    }).then(async (r) => {
+                        if (!r.ok) throw new Error(await r.text().catch(() => `HTTP ${r.status}`));
+                    })
+                )
+            );
 
-            if (newStops.length) {
-                setBusy(true);
-                await fetch("/api/route/auto-assign", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ day: selectedDay, newStops }),
-                }).catch((e) => console.error("auto-assign failed", e));
-                await loadRoutes();
-            }
-        } finally {
-            setBusy(false);
+            onUsersPatched?.(updates);
+            setMissingBatch((prev) => prev.filter((u) => !updates.some((x) => x.id === u.id)));
+        } catch (err) {
+            console.error("Manual geocode save failed:", err);
+            alert("Save failed: " + (err.message || "Unknown error"));
         }
-    }, [users, selectedDay, loadRoutes]);
+    }
 
     const handleReassign = React.useCallback(async (stop, toDriverId) => {
         const toId = Number(toDriverId);
@@ -164,19 +262,9 @@ export default function DriversDialog({
         });
     }, [routes]);
 
-    // 1) routeStops: Array<Array<UserLike>>
-    const routeStops = React.useMemo(
-        () => routes.map(r => (r.stops || [])),
-        [routes]
-    );
+    const routeStops = React.useMemo(() => routes.map(r => (r.stops || [])), [routes]);
+    const driverColors = React.useMemo(() => routes.map((r, i) => r.color || palette[i % palette.length]), [routes]);
 
-    // 2) driverColors
-    const driverColors = React.useMemo(
-        () => routes.map((r, i) => r.color || palette[i % palette.length]),
-        [routes]
-    );
-
-    // timestamp helper for filename
     function tsString() {
         const d = new Date();
         const mm = d.getMonth() + 1;
@@ -188,7 +276,6 @@ export default function DriversDialog({
         return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
     }
 
-    /** Regenerate routes (red button) */
     async function regenerateRoutes() {
         const countStr = window.prompt("How many drivers for the new route?", String(driverCount));
         if (countStr == null) return;
@@ -213,7 +300,6 @@ export default function DriversDialog({
         }
     }
 
-    /** Reset all drivers' routes (confirm) */
     async function resetAllRoutes() {
         if (!routes.length) return;
         const ok = window.confirm(`Reset ALL routes for "${selectedDay}"? This will clear completed flags.`);
@@ -238,10 +324,8 @@ export default function DriversDialog({
         }
     }
 
-    /** Optimize order for all drivers */
     async function optimizeAllRoutes() {
         if (!routes.length) return;
-
         const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
         setBusy(true);
         try {
@@ -277,7 +361,6 @@ export default function DriversDialog({
                 fullWidth
                 PaperProps={{ style: { height: "80vh", position: "relative" } }}
             >
-                {/* Header with centered red button and top-right link */}
                 <DialogTitle sx={{ pb: 1 }}>
                     <Box
                         sx={{
@@ -357,8 +440,26 @@ export default function DriversDialog({
                         onClick={async () => {
                             setBusy(true);
                             try {
-                                // IMPORTANT: pass the array-of-arrays of stops
-                                await exportRouteLabelsPDF(routeStops, driverColors, tsString);
+                                // 1) force-enrich complex using the authoritative users prop
+                                const idxs = buildComplexIndex(users);
+                                const enriched = (routeStops || []).map((stops, di) =>
+                                    (stops || []).map((s, si) => markStopComplex(s, si, idxs))
+                                );
+
+                                // 2) quick console summary so we *see* counts now
+                                const perDriver = enriched.map((stops, i) => ({
+                                    driver: i + 1,
+                                    complex: stops.filter(x => x.complex).length,
+                                    total: stops.length,
+                                }));
+                                const totalCx = perDriver.reduce((a,r)=>a+r.complex,0);
+                                console.groupCollapsed("[DriversDialog] Route labels — complex summary");
+                                console.table(perDriver);
+                                console.info("Complex total:", totalCx);
+                                console.groupEnd();
+
+                                // 3) export — the PDF splits complex to the end and page-breaks drivers
+                                await exportRouteLabelsPDF(enriched, driverColors, tsString);
                             } finally {
                                 setBusy(false);
                             }
@@ -369,20 +470,11 @@ export default function DriversDialog({
                         Download Labels
                     </Button>
 
-                    {/* New global actions */}
-                    <Button
-                        onClick={resetAllRoutes}
-                        variant="outlined"
-                        disabled={busy || !hasRoutes}
-                    >
+                    <Button onClick={resetAllRoutes} variant="outlined" disabled={busy || !hasRoutes}>
                         Reset All Routes
                     </Button>
 
-                    <Button
-                        onClick={optimizeAllRoutes}
-                        variant="outlined"
-                        disabled={busy || !hasRoutes}
-                    >
+                    <Button onClick={optimizeAllRoutes} variant="outlined" disabled={busy || !hasRoutes}>
                         Optimize All Routes
                     </Button>
                 </DialogActions>

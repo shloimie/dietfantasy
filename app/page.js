@@ -1,6 +1,6 @@
 // app/page.js
 "use client";
-// pre messup comment
+
 import * as React from "react";
 import {
     Box,
@@ -19,11 +19,23 @@ import CityColorsDialog from "../components/CityColorsDialog";
 import DriversDialog from "../components/DriversDialog";
 import DriversMap from "../components/DriversMap";
 
-
-
+/* =========================
+   Users API hook
+   ========================= */
 function useUsersApi() {
     const [users, setUsers] = React.useState([]);
     const [loading, setLoading] = React.useState(true);
+
+    // called by DriversDialog after successful PUTs
+    const onUsersPatched = React.useCallback((updates) => {
+        // updates: [{ id, lat, lng }]
+        setUsers((prev) =>
+            prev.map((u) => {
+                const hit = updates.find((x) => x.id === u.id);
+                return hit ? { ...u, lat: hit.lat, lng: hit.lng } : u;
+            })
+        );
+    }, []);
 
     const refetch = React.useCallback(async () => {
         try {
@@ -42,12 +54,12 @@ function useUsersApi() {
         refetch();
     }, [refetch]);
 
-    return { users, isLoading: loading, refetch };
+    return { users, isLoading: loading, refetch, onUsersPatched };
 }
+
 /* =========================
    City colors (DB-backed)
    ========================= */
-
 const norm = (s) => String(s || "").trim().toLowerCase();
 
 function useCityColorsApi() {
@@ -122,7 +134,6 @@ function useCityColorsApi() {
 /* =========================
    Timestamp for filenames
    ========================= */
-
 function tsString() {
     const d = new Date();
     const mm = d.getMonth() + 1;
@@ -136,11 +147,142 @@ function tsString() {
 }
 
 /* =========================
+   Complex detection & enrichment (FORCE)
+   ========================= */
+const toBool = (v) => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") {
+        const s = v.trim().toLowerCase();
+        return s === "true" || s === "1" || s === "yes" || s === "y";
+    }
+    return false;
+};
+
+const displayNameLoose = (u = {}) => {
+    const cands = [
+        u.name,
+        `${u.first ?? ""} ${u.last ?? ""}`.trim(),
+        u.fullName,
+        `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
+        u?.user?.name,
+        `${u?.user?.first ?? ""} ${u?.user?.last ?? ""}`.trim(),
+    ].filter(Boolean);
+    return cands[0] || "";
+};
+
+const normalizeName = (s) =>
+    String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+
+const normalizePhone = (s) => String(s || "").replace(/\D+/g, "").replace(/^1/, ""); // strip +1
+const normalizeAddr = (u = {}) =>
+    normalizeName(
+        [
+            u.address || u.addr || "",
+            u.apt || u.unit || "",
+            u.city || "",
+            u.state || "",
+            u.zip || "",
+        ]
+            .filter(Boolean)
+            .join(", ")
+    );
+
+const latKey = (lat) => (typeof lat === "number" ? lat.toFixed(4) : "");
+const lngKey = (lng) => (typeof lng === "number" ? lng.toFixed(4) : "");
+const latLngKey = (u) => `${latKey(u.lat ?? u.latitude)}|${lngKey(u.lng ?? u.longitude)}`;
+
+/**
+ * Build FORCE index of complex users from full users list.
+ * Keys: id, normalized name, phone, address, latlng.
+ */
+function buildForceComplexIndex(users = []) {
+    const idSet = new Set();
+    const nameSet = new Set();
+    const phoneSet = new Set();
+    const addrSet = new Set();
+    const llSet = new Set();
+
+    for (const u of users) {
+        const isCx =
+            toBool(u?.complex) ||
+            toBool(u?.isComplex) ||
+            toBool(u?.flags?.complex) ||
+            toBool(u?.user?.complex) ||
+            toBool(u?.User?.complex) ||
+            toBool(u?.client?.complex);
+        if (!isCx) continue;
+
+        if (u.id != null) idSet.add(String(u.id));
+        const nm = normalizeName(displayNameLoose(u));
+        if (nm) nameSet.add(nm);
+        const ph = normalizePhone(u.phone);
+        if (ph) phoneSet.add(ph);
+        const ak = normalizeAddr(u);
+        if (ak) addrSet.add(ak);
+        const ll = latLngKey(u);
+        if (ll !== "|") llSet.add(ll);
+    }
+
+    return { idSet, nameSet, phoneSet, addrSet, llSet };
+}
+
+/**
+ * Force-mark a stop as complex if it matches ANY of the complex index keys.
+ */
+function markStopComplex(stop, forceIdx) {
+    const s = stop || {};
+
+    // respect any direct flags first
+    const direct =
+        toBool(s?.complex) ||
+        toBool(s?.isComplex) ||
+        toBool(s?.flags?.complex) ||
+        toBool(s?.user?.complex) ||
+        toBool(s?.User?.complex) ||
+        toBool(s?.client?.complex);
+    if (direct) return { ...s, complex: true };
+
+    // id-based
+    const ids = [
+        s.userId,
+        s.userID,
+        s.userid,
+        s?.user?.id,
+        s?.User?.id,
+        s?.client?.id,
+        s.id, // sometimes stop == user
+    ]
+        .map((v) => (v == null ? null : String(v)))
+        .filter(Boolean);
+    for (const id of ids) {
+        if (forceIdx.idSet.has(id)) return { ...s, complex: true };
+    }
+
+    // name-based
+    const nm = normalizeName(displayNameLoose(s));
+    if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true };
+
+    // phone-based
+    const ph = normalizePhone(s.phone || s?.user?.phone);
+    if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true };
+
+    // address-based
+    const ak = normalizeAddr(s);
+    if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true };
+
+    // lat/lng-based
+    const ll = latLngKey(s);
+    if (ll !== "|" && forceIdx.llSet.has(ll)) return { ...s, complex: true };
+
+    return { ...s, complex: false };
+}
+
+/* =========================
    Page
    ========================= */
-
 export default function UsersPage() {
-    const { users, isLoading, refetch } = useUsersApi();
+    const { users, isLoading, refetch, onUsersPatched } = useUsersApi();
 
     // City colors (DB as source of truth)
     const {
@@ -164,7 +306,7 @@ export default function UsersPage() {
         selectedDay: "all",
         driverCount: 6,
     });
-    const [selectedDay, setSelectedDay] = useState("all"); // if used elsewhere later
+    const [selectedDay, setSelectedDay] = useState("all"); // reserved
 
     // Search + sort
     const [query, setQuery] = React.useState("");
@@ -241,7 +383,6 @@ export default function UsersPage() {
     }, [users, query, sortKey, sortAsc]);
 
     /* ===== Actions (exports) ===== */
-
     const handleExportExcel = React.useCallback(async () => {
         try {
             const mod = await import("../utils/excelExport");
@@ -276,34 +417,59 @@ export default function UsersPage() {
         }
     }, [displayedUsers]);
 
+
+    // === ROUTE-ORDERED LABELS via backend enrichment ===
+    // === ROUTE-ORDERED LABELS via backend enrichment (with debug) ===
     const handleExportLabels = React.useCallback(async () => {
         try {
-            const mod = await import("../utils/pdfLabels");
-            const fn = mod.exportLabelsPDF || mod.default;
-            if (typeof fn === "function") {
-                await fn(
-                    displayedUsers,
-                    getCityColor,
-                    (hex) => {
-                        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
-                            hex || ""
-                        );
-                        return m
-                            ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
-                            : [0, 0, 0];
-                    },
-                    tsString
-                );
-            } else {
-                console.warn("pdfLabels: exportLabelsPDF not found");
+            const routes = Array.isArray(mapData?.routes) ? mapData.routes : [];
+            if (!routes.length) {
+                console.warn("[Route Labels] No routes in memory. Open “Routes” → Show Map first.");
+                return;
             }
+
+            // Ask backend to ENRICH and include diagnostics
+            const res = await fetch("/api/labels/enrich", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    routes,
+                    users,       // the full users list you already fetched on page load
+                    strict: false,
+                    debug: true, // <— turn on verbose diag
+                }),
+            });
+            if (!res.ok) {
+                console.error("Enrich API failed:", res.status);
+                return;
+            }
+            const { routes: enrichedRoutes, diag } = await res.json();
+
+            // Frontend diagnostics
+            console.groupCollapsed("[Route Labels] Backend diag");
+            console.log("drivers:", diag?.driversCount, "stops:", diag?.stopsCount, "users:", diag?.usersCount);
+            console.log("usersComplex:", diag?.usersComplex, "keySizes:", diag?.keySizes);
+            console.table(diag?.perDriver || []);
+            console.log("sampleComplexUsers:", diag?.sampleComplexUsers || []);
+            console.log("sampleEnrichedComplexStops:", diag?.sampleEnrichedComplexStops || []);
+            console.info("Complex total (server):", diag?.totalComplex ?? "n/a");
+            console.groupEnd();
+
+            // Export PDF
+            const mod = await import("../utils/pdfRouteLabels");
+            const fn = mod.exportRouteLabelsPDF || mod.default;
+            if (typeof fn !== "function") {
+                console.error("pdfRouteLabels: exportRouteLabelsPDF not found");
+                return;
+            }
+            await fn(enrichedRoutes, null, tsString);
         } catch (e) {
-            console.error("Export Labels failed:", e);
+            console.error("Export Route Labels failed:", e);
         }
-    }, [displayedUsers, getCityColor]);
+    }, [mapData?.routes, users]);
+
 
     /* ===== Edit/Delete wiring ===== */
-
     const [editingUser, setEditingUser] = React.useState(null);
 
     const handleEdit = React.useCallback((u) => {
@@ -325,7 +491,6 @@ export default function UsersPage() {
         },
         [refetch]
     );
-
 
     const [showDetails, setShowDetails] = React.useState(false);
 
@@ -473,6 +638,7 @@ export default function UsersPage() {
                     setMapData({ routes, selectedDay, driverCount });
                     setMapOpen(true);
                 }}
+                onUsersPatched={onUsersPatched}
             />
 
             {/* Map modal */}

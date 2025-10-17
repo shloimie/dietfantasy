@@ -1,11 +1,13 @@
+// components/UserModal.jsx
 "use client";
 
 import React from "react";
 import {
     Dialog, TextField, Button, Stack, Typography, Box,
-    Collapse, List, ListItemButton, ListItemText, LinearProgress, Alert, Zoom
+    Collapse, List, ListItemButton, ListItemText, LinearProgress, Alert, Zoom,
+    FormControlLabel, Checkbox, Divider
 } from "@mui/material";
-import DoneIcon from "@mui/icons-material/Done"; // For success animation
+import DoneIcon from "@mui/icons-material/Done";
 import MapConfirmDialog from "./MapConfirmDialog";
 import { geocodeOneClient } from "../utils/geocodeOneClient";
 import { buildGeocodeQuery } from "../utils/addressHelpers";
@@ -62,16 +64,45 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
     const [hint, setHint] = React.useState(null);
     const [mapOpen, setMapOpen] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
-    const [geoSuccess, setGeoSuccess] = React.useState(false); // For success animation
+    const [geoSuccess, setGeoSuccess] = React.useState(false);
+
+    // separate flag for background persisting lat/lng (doesn't block UI)
+    const [geoPersisting, setGeoPersisting] = React.useState(false);
 
     const inflight = React.useRef(new Set());
 
+    // --- helper: minimal PUT to persist lat/lng (and normalized address) for existing users
+    async function persistLatLng(userId, geo) {
+        if (!Number.isFinite(Number(userId))) return;
+        setGeoPersisting(true);
+        try {
+            const res = await fetch(`/api/users/${userId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    lat: geo.lat, lng: geo.lng,
+                    ...(geo.address ? { address: geo.address } : {}),
+                    ...(geo.city ? { city: geo.city } : {}),
+                    ...(geo.state ? { state: geo.state } : {}),
+                    ...(geo.zip ? { zip: geo.zip } : {}),
+                }),
+            });
+            // ignore response; non-blocking
+        } catch (_) {
+            // swallow error
+        } finally {
+            setGeoPersisting(false);
+        }
+    }
+
     const trackedFetch = async (input, init = {}) => {
         const ctrl = new AbortController();
-        const sig = init.signal ? new AbortSignal.any([init.signal, ctrl.signal]) : ctrl.signal;
+        const sig = init.signal
+            ? (() => { try { return AbortSignal.any([init.signal, ctrl.signal]); } catch { return ctrl.signal; } })()
+            : ctrl.signal;
         inflight.current.add(ctrl);
         try {
-            const timeout = setTimeout(() => ctrl.abort(), 10000); // 10s timeout
+            const timeout = setTimeout(() => ctrl.abort(), 10000);
             const res = await fetch(input, { ...init, signal: sig });
             clearTimeout(timeout);
             return res;
@@ -99,6 +130,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         setHint(null);
         setSaving(false);
         setGeoSuccess(false);
+        setGeoPersisting(false);
         abortAll();
     }, [open, editingUser]);
 
@@ -122,13 +154,25 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         try {
             const a = await geocodeOneClient(qStrict);
             setForm(f => ({ ...f, lat: a.lat, lng: a.lng }));
+            if (form.id) {
+                await persistLatLng(form.id, {
+                    lat: a.lat, lng: a.lng,
+                    address: form.address, city: form.city, state: form.state, zip: form.zip,
+                });
+            }
             setGeoSuccess(true);
-            setTimeout(() => setGeoSuccess(false), 2000); // Show success for 2s
+            setTimeout(() => setGeoSuccess(false), 2000);
         } catch {
             try {
                 const qLoose = streetQueryNoUnit({ address: form.address, city: form.city, state: form.state, zip: "" });
                 const a2 = await geocodeOneClient(qLoose);
                 setForm(f => ({ ...f, lat: a2.lat, lng: a2.lng }));
+                if (form.id) {
+                    await persistLatLng(form.id, {
+                        lat: a2.lat, lng: a2.lng,
+                        address: form.address, city: form.city, state: form.state, zip: form.zip,
+                    });
+                }
                 setGeoSuccess(true);
                 setTimeout(() => setGeoSuccess(false), 2000);
             } catch (e2) {
@@ -161,11 +205,18 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         }
     }
 
-    function pickCandidate(item) {
-        if (!Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) return;
-        setForm(f => ({ ...f, lat: Number(item.lat), lng: Number(item.lng) }));
+    async function pickCandidate(item) {
+        const lat = Number(item?.lat), lng = Number(item?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        setForm(f => ({ ...f, lat, lng }));
         setCandsOpen(false);
         setGeoErr("");
+        if (form.id) {
+            await persistLatLng(form.id, {
+                lat, lng,
+                address: form.address, city: form.city, state: form.state, zip: form.zip,
+            });
+        }
         setGeoSuccess(true);
         setTimeout(() => setGeoSuccess(false), 2000);
     }
@@ -174,6 +225,12 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         setForm(f => ({ ...f, lat, lng }));
         setMapOpen(false);
         setGeoErr("");
+        if (form.id) {
+            await persistLatLng(form.id, {
+                lat, lng,
+                address: form.address, city: form.city, state: form.state, zip: form.zip,
+            });
+        }
         setGeoSuccess(true);
         setTimeout(() => setGeoSuccess(false), 2000);
     }
@@ -191,17 +248,31 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
             const isEdit = !!form.id;
             const method = isEdit ? "PUT" : "POST";
             const url = isEdit ? `/api/users/${form.id}` : "/api/users";
+
+            const payload = {
+                first: form.first, last: form.last,
+                address: form.address, apt: form.apt,
+                city: form.city, county: form.county, state: form.state, zip: form.zip,
+                phone: form.phone, dislikes: form.dislikes,
+                medicaid: !!form.medicaid, paused: !!form.paused, complex: !!form.complex,
+                schedule: form.schedule,
+                ...(typeof form.lat === "number" ? { lat: form.lat } : {}),
+                ...(typeof form.lng === "number" ? { lng: form.lng } : {}),
+            };
+
             const res = await fetch(url, {
                 method,
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(form),
+                body: JSON.stringify(payload),
             });
-            if (!res.ok) throw new Error(await res.text());
+            if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
             const saved = await res.json().catch(() => ({}));
+
+            const newUserId = saved?.user?.id ?? saved?.id ?? form.id;
 
             if (!isEdit && typeof form.lat === "number" && typeof form.lng === "number") {
                 const newStops = [{
-                    userId: saved?.id ?? form.id,
+                    userId: newUserId,
                     name: `${form.first ?? ""} ${form.last ?? ""}`.trim(),
                     address: `${form.address ?? ""}`.trim(),
                     apt: form.apt ?? null,
@@ -231,7 +302,9 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         onClose?.();
     };
 
-    const createDisabled = saving || geoBusy || (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number"));
+    const createDisabled =
+        saving || geoBusy || geoPersisting ||
+        (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number"));
 
     return (
         <Dialog
@@ -240,13 +313,14 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
             fullWidth
             maxWidth="md"
             disableEscapeKeyDown={saving}
-            sx={{ "& .MuiDialog-paper": { margin: 0, maxWidth: "90vw" } }} // Prevent unexpected margins
+            sx={{ "& .MuiDialog-paper": { margin: 0, maxWidth: "90vw" } }}
         >
             <Box sx={{ padding: 2, opacity: saving ? 0.9 : 1, margin: 0 }}>
                 <Typography variant="h6" sx={{ margin: 0 }}>
                     {form.id ? "Edit Client" : "Add Client"}
                 </Typography>
 
+                {/* Core fields */}
                 <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5, mt: 2 }}>
                     <TextField label="First" value={form.first} onChange={(e) => set("first", e.target.value)} disabled={saving} />
                     <TextField label="Last" value={form.last} onChange={(e) => set("last", e.target.value)} disabled={saving} />
@@ -260,7 +334,62 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     <TextField label="Dislikes" value={form.dislikes} onChange={(e) => set("dislikes", e.target.value)} disabled={saving} />
                 </Box>
 
-                <Box sx={{ mt: 2, display: "flex", gap: 1, flexWrap: "wrap", opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
+                {/* Flags */}
+                <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Flags</Typography>
+                    <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" sx={{ opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={!!form.medicaid}
+                                    onChange={(e) => set("medicaid", e.target.checked)}
+                                    disabled={saving}
+                                    size="small"
+                                />
+                            }
+                            label="Medicaid"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={!!form.paused}
+                                    onChange={(e) => set("paused", e.target.checked)}
+                                    disabled={saving}
+                                    size="small"
+                                />
+                            }
+                            label="Paused"
+                        />
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={!!form.complex}
+                                    onChange={(e) => set("complex", e.target.checked)}
+                                    disabled={saving}
+                                    size="small"
+                                />
+                            }
+                            label="Complex"
+                        />
+                    </Stack>
+
+                    {/* Helper messages */}
+                    {!!form.paused && (
+                        <Alert severity="info" sx={{ mt: 1 }}>
+                            This client is <strong>paused</strong> and should be excluded from new routes.
+                        </Alert>
+                    )}
+                    {!!form.complex && (
+                        <Alert severity="warning" sx={{ mt: 1 }}>
+                            This client is marked <strong>complex</strong>. They’ll print on the special Complex labels page.
+                        </Alert>
+                    )}
+                </Box>
+
+                {/* Schedule */}
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Weekly Schedule</Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
                     {DAYS.map(d => (
                         <label key={d} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                             <input
@@ -274,10 +403,11 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     ))}
                 </Box>
 
+                {/* Geocoding */}
                 <Box sx={{ mt: 2, p: 1.5, border: "1px solid #eee", borderRadius: 1, opacity: saving ? 0.7 : 1, margin: 0 }}>
                     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                         <Typography variant="subtitle2">Location</Typography>
-                        {geoBusy && <LinearProgress sx={{ width: 120, color: "#1976d2" }} />}
+                        {(geoBusy || geoPersisting) && <LinearProgress sx={{ width: 120 }} />}
                         <Box sx={{ flex: 1 }} />
                         <Button size="small" variant="outlined" onClick={tryAutoGeocode} disabled={geoBusy || saving}>
                             Auto Geocode
@@ -302,6 +432,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     {typeof form.lat === "number" && typeof form.lng === "number" && !geoSuccess ? (
                         <Typography variant="caption" sx={{ mt: 1, display: "block", color: "#2e7d32" }}>
                             ✓ Geocoded: {form.lat.toFixed(6)}, {form.lng.toFixed(6)}
+                            {geoPersisting ? " (saving…)" : ""}
                         </Typography>
                     ) : !geoSuccess ? (
                         <Typography variant="caption" sx={{ mt: 1, display: "block", opacity: 0.75 }}>
@@ -337,6 +468,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     </Collapse>
                 </Box>
 
+                {/* Actions */}
                 <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, mt: 2, margin: 0 }}>
                     <Button onClick={handleDialogClose} disabled={saving}>Cancel</Button>
                     <Button
