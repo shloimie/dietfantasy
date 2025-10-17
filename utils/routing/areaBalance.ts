@@ -1,6 +1,24 @@
-// utils/routing/areaBalance.ts
-// Morton (Z-order) split -> equal contiguous chunks -> simple NN order per chunk
-export type LatLng = { id: number; lat: number; lng: number };
+// Outliers-to-Driver0 via 10mi components -> DP cuts with size bounds & angular compactness -> NN -> 2-opt -> rotate to DF
+export type LatLng = { id: number; lat: number | string; lng: number | string };
+
+/** Diet Fantasy HQ */
+const DF = { lat: 41.146139747821344, lng: -73.98944108338935 };
+
+/** ---- Tunables ---- */
+const TEN_MI_KM = 16.09344;                // 10 miles in km
+const MIN_CLUSTER_SIZE = 3;                 // components smaller than this -> Driver 0
+const SLACK_PERC_SEQUENCE = [0.15, 0.25, 0.35, 0.50]; // size slack for DP balance
+
+// Weights in chunk compactness cost
+const DIAG_WEIGHT = 1000;
+const SIZE_PENALTY = 0.25;
+const ANGULAR_WEIGHT = 300;
+
+/* ---------------- utils ---------------- */
+function num(v: unknown) {
+    const n = typeof v === "string" ? parseFloat(v) : (v as number);
+    return Number.isFinite(n) ? n : NaN;
+}
 
 function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const R = 6371;
@@ -11,7 +29,6 @@ function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: numbe
     return 2 * R * Math.asin(Math.sqrt(A));
 }
 
-// Equal-size quotas that differ by at most 1 (contiguous, stable)
 function quotas(n: number, k: number) {
     const res: number[] = [];
     for (let i = 0; i < k; i++) {
@@ -21,7 +38,6 @@ function quotas(n: number, k: number) {
     return res;
 }
 
-// Interleave 16-bit x and y into a 32-bit Morton code
 function part1by1(v: number) {
     v &= 0x0000ffff;
     v = (v | (v << 8)) & 0x00FF00FF;
@@ -30,11 +46,8 @@ function part1by1(v: number) {
     v = (v | (v << 1)) & 0x55555555;
     return v >>> 0;
 }
-function morton(x: number, y: number) {
-    return (part1by1(x) | (part1by1(y) << 1)) >>> 0;
-}
+function morton(x: number, y: number) { return (part1by1(x) | (part1by1(y) << 1)) >>> 0; }
 
-// Map lat/lng to 16-bit grid in the local bounding box
 function toGrid(
     p: { lat: number; lng: number },
     bbox: { minLat: number; maxLat: number; minLng: number; maxLng: number },
@@ -53,8 +66,10 @@ function toGrid(
     return { x, y };
 }
 
-// Simple NN order inside each chunk to get a usable visiting sequence
-function nnOrder(points: LatLng[]) {
+/* --------------- intra-chunk ordering --------------- */
+type P = { id: number; lat: number; lng: number };
+
+function nnOrder(points: P[]) {
     if (points.length <= 2) return points.map(p => p.id);
     const centroid = {
         lat: points.reduce((s, p) => s + p.lat, 0) / points.length,
@@ -66,7 +81,7 @@ function nnOrder(points: LatLng[]) {
         if (d < best) { best = d; start = i; }
     }
     const remaining = points.slice();
-    const route: LatLng[] = [remaining.splice(start, 1)[0]];
+    const route: P[] = [remaining.splice(start, 1)[0]];
     while (remaining.length) {
         const last = route[route.length - 1];
         let ni = 0, nd = Infinity;
@@ -79,81 +94,266 @@ function nnOrder(points: LatLng[]) {
     return route.map(p => p.id);
 }
 
-/**
- * Plan by Morton sorting:
- *  1) Compute bbox, convert each point to 16-bit grid coords.
- *  2) Morton-code each point; sort by that code (space-filling curve).
- *  3) Cut sorted list into K contiguous chunks (equal sizes ±1).
- *  4) For each chunk, NN order for the visiting sequence.
- */
+function twoOpt(ids: number[], idToPt: Map<number, P>, maxPasses = 1) {
+    const n = ids.length; if (n < 4) return ids;
+    const D = (i: number, j: number) => haversine(idToPt.get(ids[i])!, idToPt.get(ids[j])!);
+    let improved = true, pass = 0;
+    while (improved && pass++ < maxPasses) {
+        improved = false;
+        for (let i = 0; i < n - 3; i++) {
+            for (let k = i + 2; k < n - 1; k++) {
+                const d1 = D(i, i + 1) + D(k, k + 1);
+                const d2 = D(i, k) + D(i + 1, k + 1);
+                if (d2 + 1e-9 < d1) {
+                    const mid = ids.slice(i + 1, k + 1).reverse();
+                    ids = ids.slice(0, i + 1).concat(mid, ids.slice(k + 1));
+                    improved = true;
+                }
+            }
+        }
+    }
+    return ids;
+}
+
+function rotateIdsToDF(ids: number[], idToPt: Map<number, P>) {
+    if (!ids.length) return ids;
+    let bestIdx = 0, bestD = Infinity;
+    for (let i = 0; i < ids.length; i++) {
+        const p = idToPt.get(ids[i]); if (!p) continue;
+        const d = haversine(DF, p);
+        if (d < bestD) { bestD = d; bestIdx = i; }
+    }
+    return bestIdx === 0 ? ids : ids.slice(bestIdx).concat(ids.slice(0, bestIdx));
+}
+
+/* --------------- angles for compactness --------------- */
+function angleFromDF(p: P) {
+    const dy = p.lat - DF.lat, dx = p.lng - DF.lng;
+    return Math.atan2(dy, dx);
+}
+function circularVariance(angles: number[]) {
+    if (!angles.length) return 0;
+    let C = 0, S = 0;
+    for (const a of angles) { C += Math.cos(a); S += Math.sin(a); }
+    const R = Math.sqrt(C * C + S * S) / angles.length;
+    return 1 - R;
+}
+
+/* --------------- components at 10 miles --------------- */
+type Component = { ids: number[]; pts: P[] };
+
+function buildComponents(points: P[], radiusKm = TEN_MI_KM): Component[] {
+    const n = points.length;
+    const adj: number[][] = Array.from({ length: n }, () => []);
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            if (haversine(points[i], points[j]) <= radiusKm) {
+                adj[i].push(j); adj[j].push(i);
+            }
+        }
+    }
+    const seen = new Array<boolean>(n).fill(false);
+    const comps: Component[] = [];
+    for (let i = 0; i < n; i++) {
+        if (seen[i]) continue;
+        const stack = [i]; seen[i] = true;
+        const idxs: number[] = [];
+        while (stack.length) {
+            const u = stack.pop()!;
+            idxs.push(u);
+            for (const v of adj[u]) if (!seen[v]) { seen[v] = true; stack.push(v); }
+        }
+        const pts = idxs.map(ix => points[ix]);
+        const ids = pts.map(p => p.id);
+        comps.push({ ids, pts });
+    }
+    return comps;
+}
+
+function splitOutliersByComponents(points: P[]) {
+    const comps = buildComponents(points, TEN_MI_KM);
+    if (comps.length <= 1) {
+        if (comps.length === 1 && comps[0].ids.length < MIN_CLUSTER_SIZE) {
+            return { keep: [] as P[], toD0: comps[0].pts };
+        }
+        return { keep: points, toD0: [] as P[] };
+    }
+
+    const compMinDist: number[] = comps.map(() => Infinity);
+    for (let a = 0; a < comps.length; a++) {
+        for (let b = a + 1; b < comps.length; b++) {
+            let best = Infinity;
+            for (const pa of comps[a].pts) {
+                for (const pb of comps[b].pts) {
+                    const d = haversine(pa, pb);
+                    if (d < best) best = d;
+                    if (best <= TEN_MI_KM) break;
+                }
+                if (best <= TEN_MI_KM) break;
+            }
+            compMinDist[a] = Math.min(compMinDist[a], best);
+            compMinDist[b] = Math.min(compMinDist[b], best);
+        }
+    }
+
+    const keep: P[] = [];
+    const toD0: P[] = [];
+    comps.forEach((c, idx) => {
+        const tooSmall = c.ids.length < MIN_CLUSTER_SIZE;
+        const farFromAll = compMinDist[idx] > TEN_MI_KM;
+        if (tooSmall || farFromAll) toD0.push(...c.pts);
+        else keep.push(...c.pts);
+    });
+
+    return { keep, toD0 };
+}
+
+/* --------------- compactness + bounded DP cuts --------------- */
+function chunkCost(sorted: P[], i: number, jInclusive: number) {
+    if (jInclusive < i) return 0;
+    if (i === jInclusive) return 0.05;
+    let minLat = +Infinity, maxLat = -Infinity, minLng = +Infinity, maxLng = -Infinity;
+    const angs: number[] = [];
+    for (let t = i; t <= jInclusive; t++) {
+        const p = sorted[t];
+        if (p.lat < minLat) minLat = p.lat; if (p.lat > maxLat) maxLat = p.lat;
+        if (p.lng < minLng) minLng = p.lng; if (p.lng > maxLng) maxLng = p.lng;
+        angs.push(angleFromDF(p));
+    }
+    const diag = Math.hypot(maxLat - minLat, maxLng - minLng);
+    const len = jInclusive - i + 1;
+    const angVar = circularVariance(angs);
+    return diag * DIAG_WEIGHT + Math.sqrt(len) * SIZE_PENALTY + angVar * ANGULAR_WEIGHT;
+}
+
+function chooseCutsDPWithQuotas(sorted: P[], k: number) {
+    const n = sorted.length;
+    const target = quotas(n, k);
+    const avg = n / k;
+
+    for (const perc of SLACK_PERC_SEQUENCE) {
+        const slack = Math.max(2, Math.round(avg * perc));
+        const lo = target.map(t => Math.max(1, t - slack));
+        const hi = target.map(t => Math.min(n, t + slack));
+
+        const dp = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(+Infinity));
+        const parent = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(-1));
+        dp[0][0] = 0;
+
+        for (let c = 1; c <= k; c++) {
+            for (let end = 1; end <= n; end++) {
+                const minSize = lo[c - 1];
+                const maxSize = hi[c - 1];
+                const startMin = Math.max(c - 1, end - maxSize);
+                const startMax = Math.min(end - 1, end - minSize);
+                for (let mid = startMin; mid <= startMax; mid++) {
+                    const cost = dp[c - 1][mid] + chunkCost(sorted, mid, end - 1);
+                    if (cost < dp[c][end]) { dp[c][end] = cost; parent[c][end] = mid; }
+                }
+            }
+        }
+
+        if (isFinite(dp[k][n])) {
+            const bounds: Array<[number, number]> = [];
+            let c = k, e = n;
+            while (c > 0) {
+                const m = parent[c][e];
+                bounds.push([m, e]);
+                e = m; c--;
+            }
+            bounds.reverse();
+            return bounds;
+        }
+    }
+
+    // fallback: equal contiguous chunks
+    const q = quotas(n, k);
+    const out: Array<[number, number]> = [];
+    let off = 0;
+    for (let i = 0; i < k; i++) { const sz = q[i]; out.push([off, off + sz]); off += sz; }
+    return out;
+}
+
+/* --------------- main --------------- */
 export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) {
     if (driverCount <= 0) throw new Error("driverCount must be >= 1");
-    if (points.length === 0) return [];
 
-    const minLat = Math.min(...points.map(p => p.lat));
-    const maxLat = Math.max(...points.map(p => p.lat));
-    const minLng = Math.min(...points.map(p => p.lng));
-    const maxLng = Math.max(...points.map(p => p.lng));
+    // Coerce numeric strings, drop only truly invalid entries
+    const geocoded: P[] = points
+        .map(p => ({ id: p.id, lat: num(p.lat), lng: num(p.lng) }))
+        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+    if (geocoded.length === 0) {
+        return [{ driverIndex: 0, center: { lat: 0, lng: 0 }, stopIds: [], count: 0 }];
+    }
+
+    // Split: outliers/tiny components → Driver 0
+    const { keep, toD0 } = splitOutliersByComponents(geocoded);
+
+    // Relax if rule was too strict
+    const keepPoints = keep.length ? keep : geocoded;
+    const toD0Points = keep.length ? toD0 : [];
+
+    const idToPt = new Map<number, P>(keepPoints.map(p => [p.id, p]));
+    const minLat = Math.min(...keepPoints.map(p => p.lat));
+    const maxLat = Math.max(...keepPoints.map(p => p.lat));
+    const minLng = Math.min(...keepPoints.map(p => p.lng));
+    const maxLng = Math.max(...keepPoints.map(p => p.lng));
     const bbox = { minLat, maxLat, minLng, maxLng };
 
-    // Try four orientations and pick the one with lowest within-chunk span
     const orientations = [
         { flipX: false, flipY: false },
-        { flipX: true, flipY: false },
-        { flipX: false, flipY: true },
-        { flipX: true, flipY: true },
+        { flipX: true,  flipY: false },
+        { flipX: false, flipY: true  },
+        { flipX: true,  flipY: true  },
     ];
 
-    let bestSorted: LatLng[] = points;
-    let bestScore = Infinity;
-
+    let bestSorted: P[] = keepPoints, bestScore = Infinity;
     for (const o of orientations) {
-        const sorted = points
-            .map(p => {
-                const g = toGrid(p, bbox, o.flipX, o.flipY);
-                return { p, code: morton(g.x, g.y) };
-            })
-            .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
+        const sorted = keepPoints
+            .map(p => { const g = toGrid(p, bbox, o.flipX, o.flipY); return { p, code: morton(g.x, g.y) }; })
+            .sort((a, b) => a.code - b.code)
             .map(x => x.p);
 
-        const q = quotas(points.length, driverCount);
-        let idx = 0, score = 0;
+        const q = quotas(keepPoints.length, driverCount);
+        let off = 0, score = 0;
         for (let i = 0; i < driverCount; i++) {
-            const csize = q[i];
-            const chunk = sorted.slice(idx, idx + csize);
-            idx += csize;
-            if (chunk.length <= 1) continue;
-            const cMinLat = Math.min(...chunk.map(p => p.lat));
-            const cMaxLat = Math.max(...chunk.map(p => p.lat));
-            const cMinLng = Math.min(...chunk.map(p => p.lng));
-            const cMaxLng = Math.max(...chunk.map(p => p.lng));
-            score += (cMaxLat - cMinLat) + (cMaxLng - cMinLng);
+            const sz = q[i];
+            score += chunkCost(sorted, off, off + sz - 1);
+            off += sz;
         }
         if (score < bestScore) { bestScore = score; bestSorted = sorted; }
     }
 
-    const q = quotas(points.length, driverCount);
-    const routes: { driverIndex: number; center: { lat: number; lng: number }; stopIds: number[]; count: number }[] = [];
+    const bounds = chooseCutsDPWithQuotas(bestSorted, Math.min(driverCount, bestSorted.length));
 
-    let offset = 0;
-    for (let i = 0; i < driverCount; i++) {
-        const size = q[i];
-        const chunk = bestSorted.slice(offset, offset + size);
-        offset += size;
+    const planned: { driverIndex: number; center: { lat: number; lng: number }; stopIds: number[]; count: number }[] = [];
+    for (let i = 0; i < bounds.length; i++) {
+        const [s, e] = bounds[i];
+        const chunk = bestSorted.slice(s, e);
 
-        const stopIds = nnOrder(chunk);
+        let ids = nnOrder(chunk);
+        ids = twoOpt(ids, idToPt, 1);
+        ids = rotateIdsToDF(ids, idToPt);
+
         const center = {
-            lat: chunk.reduce((s, p) => s + p.lat, 0) / Math.max(1, chunk.length),
-            lng: chunk.reduce((s, p) => s + p.lng, 0) / Math.max(1, chunk.length),
+            lat: chunk.reduce((sum, p) => sum + p.lat, 0) / Math.max(1, chunk.length),
+            lng: chunk.reduce((sum, p) => sum + p.lng, 0) / Math.max(1, chunk.length),
         };
 
-        routes.push({
-            driverIndex: i,
-            center,
-            stopIds,
-            count: stopIds.length,
-        });
+        planned.push({ driverIndex: i + 1, center, stopIds: ids, count: ids.length });
     }
 
-    return routes;
+    const d0Sorted = toD0Points.slice()
+        .sort((a, b) => angleFromDF(a) - angleFromDF(b))
+        .map(p => p.id);
+
+    const transferBucket = {
+        driverIndex: 0,
+        center: toD0Points.length ? { lat: toD0Points[0].lat, lng: toD0Points[0].lng } : { lat: 0, lng: 0 },
+        stopIds: d0Sorted,
+        count: d0Sorted.length,
+    };
+
+    return [transferBucket, ...planned];
 }
