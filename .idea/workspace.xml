@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="labels, geocoding and other bugs">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="before leaflet">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/generate/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/generate/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/routing/areaBalance.ts" beforeDir="false" afterPath="$PROJECT_DIR$/utils/routing/areaBalance.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -91,7 +90,7 @@
       <updated>1757207808918</updated>
       <workItem from="1757207809944" duration="36520000" />
       <workItem from="1760634069511" duration="4505000" />
-      <workItem from="1760723189519" duration="9743000" />
+      <workItem from="1760723189519" duration="11937000" />
     </task>
     <task id="LOCAL-00001" summary="project">
       <option name="closed" value="true" />
@@ -221,7 +220,15 @@
       <option name="project" value="LOCAL" />
       <updated>1760729880304</updated>
     </task>
-    <option name="localTasksCounter" value="17" />
+    <task id="LOCAL-00017" summary="before leaflet">
+      <option name="closed" value="true" />
+      <created>1760733112528</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1760733112528</updated>
+    </task>
+    <option name="localTasksCounter" value="18" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -255,6 +262,7 @@
     <MESSAGE value="hell2" />
     <MESSAGE value="extention working" />
     <MESSAGE value="labels, geocoding and other bugs" />
-    <option name="LAST_COMMIT_MESSAGE" value="labels, geocoding and other bugs" />
+    <MESSAGE value="before leaflet" />
+    <option name="LAST_COMMIT_MESSAGE" value="before leaflet" />
   </component>
 </project>
