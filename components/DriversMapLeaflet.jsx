@@ -1,4 +1,3 @@
-// components/DriversMapLeaflet.jsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -17,23 +16,19 @@ import "leaflet/dist/leaflet.css";
 /* ==================== Config / constants ==================== */
 
 // Selection colors
-const SELECTION_PIN_COLOR  = "#ebf707";               // your yellow
+const SELECTION_PIN_COLOR  = "#ebf707";               // yellow
 const SELECTION_RING_COLOR = "rgba(235,247,7,0.55)";  // halo/glow
 
-// Icon geometry for the custom SVG below
+// Icon geometry
 const PIN_W = 28;
 const PIN_H = 42;
+const ANCHOR_X = 14;  // tip X
+const ANCHOR_Y = 42;  // tip Y
 
-// Anchor at the visual tip of the pin.
-const ANCHOR_X = 14;  // bottom center X (px)
-const ANCHOR_Y = 42;  // bottom tip Y (px)
-
-// Selection hit tolerance for box selection (pixels)
+// Selection hit tolerance (pixels)
 const HIT_RADIUS_PX = 16;
 
 /* ==================== Utils ==================== */
-const DEBUG = false;
-const dlog = (...a) => DEBUG && console.log("[DriversMap]", ...a);
 const sid = (v) => { try { return v == null ? "" : String(v); } catch { return ""; } };
 const toNum = (v) => { const n = typeof v === "string" ? parseFloat(v) : v; return Number.isFinite(n) ? n : null; };
 const getLL = (s) => {
@@ -63,7 +58,6 @@ function makePinIcon(color = "#1f77b4", selected = false) {
         ? `<circle cx="${ANCHOR_X}" cy="${ANCHOR_Y - 29}" r="8" fill="none" stroke="${SELECTION_RING_COLOR}" stroke-width="3"></circle>`
         : "";
 
-    // No inner CSS translate; iconAnchor handles placement
     const html = `
     <div style="position:relative; width:${PIN_W}px; height:${PIN_H}px;">
       <svg width="${PIN_W}" height="${PIN_H}" viewBox="0 0 ${PIN_W} ${PIN_H}" xmlns="http://www.w3.org/2000/svg" style="display:block">
@@ -79,7 +73,7 @@ function makePinIcon(color = "#1f77b4", selected = false) {
         html,
         className: "pin-icon",
         iconSize: [PIN_W, PIN_H],
-        iconAnchor: [ANCHOR_X, ANCHOR_Y], // tip of the pin
+        iconAnchor: [ANCHOR_X, ANCHOR_Y],
         popupAnchor: [0, -36],
     });
     iconCache.set(k, icon);
@@ -114,10 +108,18 @@ function loadView() {
     return null;
 }
 
-/* ==================== Map bridge ==================== */
+/* ==================== Map bridge (single-fire) ==================== */
 function MapBridge({ onReady }) {
     const map = useMap();
-    useEffect(() => { if (map) onReady?.(map); }, [map, onReady]);
+    const onReadyRef = useRef(onReady);
+    const calledRef = useRef(false);
+    useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+    useEffect(() => {
+        if (map && !calledRef.current) {
+            calledRef.current = true;
+            onReadyRef.current?.(map);
+        }
+    }, [map]);
     return null;
 }
 
@@ -163,7 +165,7 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
         .openOn(map);
 }
 
-/* ==================== Pretty checkbox rows ==================== */
+/* ==================== Pretty checkbox row ==================== */
 function CheckRow({ id, checked, onChange, label, title }) {
     const selected = !!checked;
     return (
@@ -171,14 +173,8 @@ function CheckRow({ id, checked, onChange, label, title }) {
             htmlFor={id}
             title={title}
             style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                fontSize: 13,
-                userSelect: "none",
-                cursor: "pointer",
-                padding: "8px 10px",
-                borderRadius: 10,
+                display: "flex", alignItems: "center", gap: 10, fontSize: 13, userSelect: "none",
+                cursor: "pointer", padding: "8px 10px", borderRadius: 10,
                 border: selected ? "1px solid #99c2ff" : "1px solid #e5e7eb",
                 background: selected ? "#eef5ff" : "#fff",
                 color: selected ? "#0b66ff" : "#111827",
@@ -190,13 +186,7 @@ function CheckRow({ id, checked, onChange, label, title }) {
                 type="checkbox"
                 checked={checked}
                 onChange={(e) => onChange?.(e.target.checked)}
-                style={{
-                    width: 18,
-                    height: 18,
-                    transform: "scale(1.25)",
-                    accentColor: "#0b66ff",
-                    cursor: "pointer",
-                }}
+                style={{ width: 18, height: 18, transform: "scale(1.25)", accentColor: "#0b66ff", cursor: "pointer" }}
             />
             <span style={{ lineHeight: 1 }}>{label}</span>
         </label>
@@ -207,50 +197,41 @@ function CheckRow({ id, checked, onChange, label, title }) {
 export default function DriversMapLeaflet({
                                               drivers = [],
                                               unrouted = [],
-                                              onReassign,         // (stop, driverId) => Promise
-                                              onReassignBulk,     // OPTIONAL: ({ stopIds, driverId }) => Promise
-                                              onClose,
+                                              onReassign,            // (stop, driverId)
+                                              onExpose,              // optional
                                               initialCenter = [40.7128, -74.006],
                                               initialZoom = 10,
+                                              showRouteLinesDefault = false,
                                           }) {
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
     const [didFitOnce, setDidFitOnce] = useState(false);
 
     const onReassignRef = useRef(onReassign);
-    const onReassignBulkRef = useRef(onReassignBulk);
     useEffect(() => { onReassignRef.current = onReassign; }, [onReassign]);
-    useEffect(() => { onReassignBulkRef.current = onReassignBulk; }, [onReassignBulk]);
 
-    // Local copies for instant UI without parent refresh
     const [localDrivers, setLocalDrivers] = useState(drivers || []);
     const [localUnrouted, setLocalUnrouted] = useState(unrouted || []);
     const localDriversRef = useRef(localDrivers);
     const localUnroutedRef = useRef(localUnrouted);
     useEffect(() => { localDriversRef.current = localDrivers; }, [localDrivers]);
     useEffect(() => { localUnroutedRef.current = localUnrouted; }, [localUnrouted]);
+    useEffect(() => { setLocalDrivers(Array.isArray(drivers) ? drivers : []); }, [drivers]);
+    useEffect(() => { setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []); }, [unrouted]);
 
-    useEffect(() => {
-        setLocalDrivers(Array.isArray(drivers) ? drivers : []);
-    }, [drivers]);
-
-    useEffect(() => {
-        setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []);
-    }, [unrouted]);
-
-    /* ------- state: toggles / selection / halo ------- */
-    const [showRouteLines, setShowRouteLines] = useState(false);
+    /* ------- toggles / selection / halo ------- */
+    const [showRouteLines, setShowRouteLines] = useState(!!showRouteLinesDefault);
     const [selectMode, setSelectMode] = useState(false);
     const [clickPickMode, setClickPickMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [hoverIds, setHoverIds] = useState(() => new Set());
+    const hoverIdsRef = useRef(new Set());
+    const [bulkDriverId, setBulkDriverId] = useState("");
     const [bulkBusy, setBulkBusy] = useState(false);
     const selectedCount = selectedIds.size;
 
     const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
-    const clearHalo = useCallback(() => {
-        setSelectedHalo({ lat: null, lng: null, color: "#666" });
-    }, []);
+    const clearHalo = useCallback(() => setSelectedHalo({ lat: null, lng: null, color: "#666" }), []);
 
     /* ------- derived ------- */
     const hasLL = (s) => !!getLL(s);
@@ -274,7 +255,7 @@ export default function DriversMapLeaflet({
 
     const indexItems = useMemo(
         () => localDrivers.map((d) => ({
-            driverId: d.driverId, name: d.name, color: d.color, count: (d.stops || []).filter(hasLL).length, // visible only
+            driverId: d.driverId, name: d.name, color: d.color, count: (d.stops || []).filter(hasLL).length,
         })),
         [localDrivers]
     );
@@ -294,24 +275,6 @@ export default function DriversMapLeaflet({
         assignedMarkerRefs.current = new Map();
         unroutedMarkerRefs.current = new Map();
     }, [localDrivers, unroutedFiltered]);
-
-    /* ------- search ------- */
-    const [q, setQ] = useState("");
-    const [results, setResults] = useState([]);
-    useEffect(() => {
-        const needle = q.trim().toLowerCase();
-        if (!needle) { setResults([]); return; }
-        const rows = [];
-        for (const d of localDrivers) for (const s of d.stops || []) {
-            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
-            if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __unrouted: false });
-        }
-        for (const s of unroutedFiltered) {
-            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
-            if (hay.includes(needle)) rows.push({ ...s, __driverId: null, __unrouted: true });
-        }
-        setResults(rows.slice(0, 30));
-    }, [q, localDrivers, unroutedFiltered]);
 
     /* ------- local data updates ------- */
     const moveStopsLocally = useCallback((stopIds, toDriverId) => {
@@ -333,7 +296,9 @@ export default function DriversMapLeaflet({
 
         const nextDrivers = strippedDrivers.map((d) => {
             if (Number(d.driverId) === Number(toDriverId)) {
-                const newStops = Array.isArray(d.stops) ? [...d.stops, ...movingStops.map((s) => ({ ...s }))] : movingStops.map((s) => ({ ...s }));
+                const newStops = Array.isArray(d.stops)
+                    ? [...d.stops, ...movingStops.map((s) => ({ ...s }))]
+                    : movingStops.map((s) => ({ ...s }));
                 return { ...d, stops: newStops };
             }
             return d;
@@ -345,15 +310,17 @@ export default function DriversMapLeaflet({
         localUnroutedRef.current = nextUnrouted;
     }, []);
 
+    /* ------- popup assign (single) ------- */
     const onReassignLocal = useCallback(
         async (stop, toDriverId) => {
-            await onReassignRef.current?.(stop, toDriverId);
-            moveStopsLocally([stop.id], toDriverId);
+            const id = stop?.id;
+            if (id == null) return;
+            await onReassignRef.current?.(stop, Number(toDriverId)); // persist
+            moveStopsLocally([id], toDriverId);                      // reflect locally
         },
         [moveStopsLocally]
     );
 
-    /* ------- popup open on normal click ------- */
     const openAssignForStop = useCallback((stop, baseColor) => {
         const map = mapRef.current;
         if (!map) return;
@@ -368,6 +335,36 @@ export default function DriversMapLeaflet({
         if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
     }, [onReassignLocal]);
 
+    /* ------- search ------- */
+    const [q, setQ] = useState("");
+    const [results, setResults] = useState([]);
+    useEffect(() => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) { setResults([]); return; }
+        const rows = [];
+        for (const d of localDrivers) for (const s of d.stops || []) {
+            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
+            if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __driverName: d.name, __unrouted: false, __color: d.color });
+        }
+        for (const s of unroutedFiltered) {
+            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
+            if (hay.includes(needle)) rows.push({ ...s, __driverId: null, __driverName: "Unrouted", __unrouted: true, __color: "#666" });
+        }
+        setResults(rows.slice(0, 50));
+    }, [q, localDrivers, unroutedFiltered]);
+
+    const focusResult = useCallback((row) => {
+        if (!row) return;
+        const map = mapRef.current;
+        const ll = getLL(row);
+        if (!map || !ll) return;
+        map.setView(ll, Math.max(map.getZoom(), 14), { animate: true });
+
+        const { stop, color } = findStopByIdLocal(row.id, localDriversRef.current, localUnroutedRef.current);
+        openAssignForStop(stop || row, color || row.__color || "#1f77b4");
+    }, [openAssignForStop]);
+
+    /* ------- selection helpers ------- */
     const toggleId = useCallback((id, forceOn = null) => {
         setSelectedIds((prev) => {
             const next = new Set(prev);
@@ -395,7 +392,7 @@ export default function DriversMapLeaflet({
         openAssignForStop(stop, baseColor);
     }, [clickPickMode, openAssignForStop, toggleId]);
 
-    /* ------- Map ready / view + halo clearing hooks ------- */
+    /* ------- Map ready / view ------- */
     const handleMapReady = useCallback((m) => {
         mapRef.current = m;
         const saved = loadView();
@@ -406,7 +403,6 @@ export default function DriversMapLeaflet({
         m.on("moveend", onMoveEnd);
         m.on("zoomend", onMoveEnd);
 
-        // Clear halo when clicking empty map or closing any popup
         m.on("click", clearHalo);
         m.on("popupclose", clearHalo);
 
@@ -426,7 +422,7 @@ export default function DriversMapLeaflet({
         } catch {}
     }, [mapReady, didFitOnce, allPoints]);
 
-    /* ======== Box select in container pixel space (accurate) ======== */
+    /* ======== Box select (accurate; container pixel space) ======== */
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
@@ -494,7 +490,7 @@ export default function DriversMapLeaflet({
             container.appendChild(overlay);
 
             lockMap();
-            clearHalo();        // <<< hide halo as soon as you start a drag-select
+            clearHalo();
             map.closePopup();
             e.preventDefault(); e.stopPropagation();
         }
@@ -502,7 +498,6 @@ export default function DriversMapLeaflet({
         function onMouseMove(e) {
             if (!startClient || !overlay) return;
 
-            // visual box (client coords)
             const cRect = container.getBoundingClientRect();
             const nowClient = { x: e.clientX, y: e.clientY };
             const rrClient = {
@@ -516,7 +511,6 @@ export default function DriversMapLeaflet({
             overlay.style.width  = `${rrClient.x2 - rrClient.x1}px`;
             overlay.style.height = `${rrClient.y2 - rrClient.y1}px`;
 
-            // compute rect in container pixels
             const a = toContainerXY(startClient.x, startClient.y);
             const b = toContainerXY(nowClient.x, nowClient.y);
             const rect = normalizeRect(a, b);
@@ -536,7 +530,14 @@ export default function DriversMapLeaflet({
             visit(assignedMarkerRefs.current);
             visit(unroutedMarkerRefs.current);
 
-            setHoverIds(picked);
+            let changed = false;
+            if (picked.size !== hoverIdsRef.current.size) changed = true;
+            else { for (const id of picked) { if (!hoverIdsRef.current.has(id)) { changed = true; break; } } }
+            if (changed) {
+                hoverIdsRef.current = picked;
+                setHoverIds(picked);
+            }
+
             e.preventDefault(); e.stopPropagation();
         }
 
@@ -552,6 +553,7 @@ export default function DriversMapLeaflet({
                 });
                 return new Set();
             });
+            hoverIdsRef.current = new Set();
 
             if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
             overlay = null; startClient = null;
@@ -587,64 +589,134 @@ export default function DriversMapLeaflet({
         prevLiveSetRef.current = live;
     }, [selectedIds, hoverIds, setIconForId]);
 
-    /* ------- Bulk assign ------- */
-    const [bulkDriverId, setBulkDriverId] = useState("");
-    const applyBulkAssign = useCallback(async () => {
-        const to = Number(bulkDriverId);
-        if (!Number.isFinite(to) || selectedIds.size === 0 || bulkBusy) return;
-        setBulkBusy(true);
-
+    /* ======== TRUE SEQUENTIAL BULK ASSIGN ======== */
+    const applyBulkAssign = useCallback(async (toDriverId) => {
+        const to = Number(toDriverId);
         const ids = Array.from(selectedIds);
-        const dSnap = localDriversRef.current;
-        const uSnap = localUnroutedRef.current;
-        const stops = ids.map((id) => findStopByIdLocal(id, dSnap, uSnap).stop).filter(Boolean);
+        if (!Number.isFinite(to) || ids.length === 0 || bulkBusy) return;
 
+        setBulkBusy(true);
         try {
-            if (onReassignBulkRef.current) {
-                await onReassignBulkRef.current({ stopIds: stops.map((s) => s.id), driverId: to });
-            } else {
-                await Promise.all(stops.map((s) => onReassignRef.current?.(s, to)));
+            for (const id of ids) {
+                const { stop } = findStopByIdLocal(id, localDriversRef.current, localUnroutedRef.current);
+                if (!stop) continue;
+                await onReassignRef.current?.(stop, to);  // persist (server)
+                moveStopsLocally([id], to);               // update local UI
             }
-            moveStopsLocally(stops.map((s) => s.id), to);
+        } catch (err) {
+            console.error("[BulkAssign(sequential)] failed:", err);
         } finally {
-            setSelectedIds(new Set());
-            setHoverIds(new Set());
-            setBulkDriverId("");
-            setBulkBusy(false);
+            // Clear selection & highlights
             prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
             prevLiveSetRef.current = new Set();
-            clearHalo(); // also drop any remaining halo after a batch
+            setSelectedIds(new Set());
+            setHoverIds(new Set());
+            hoverIdsRef.current = new Set();
+            setBulkDriverId("");
+            clearHalo();
+            setBulkBusy(false);
         }
-    }, [bulkDriverId, selectedIds, bulkBusy, moveStopsLocally, setIconForId, clearHalo]);
+    }, [selectedIds, bulkBusy, moveStopsLocally, clearHalo, setIconForId]);
 
     const clearSelection = useCallback(() => {
         prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
         prevLiveSetRef.current = new Set();
         setSelectedIds(new Set());
         setHoverIds(new Set());
+        hoverIdsRef.current = new Set();
         setBulkDriverId("");
-        clearHalo(); // <<< ensure halo is gone on full reset
+        clearHalo();
     }, [setIconForId, clearHalo]);
 
-    /* ------- Overlay (toolbar + toggles) ------- */
-    const overlay = (
+    /* ======== Expose API (optional) ======== */
+    useEffect(() => {
+        if (!onExpose) return;
+        const api = {
+            applyBulkAssign,
+            clearSelection,
+            getSelectedCount: () => selectedIds.size,
+        };
+        onExpose(api);
+        // run once
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    /* ======== UI overlays ======== */
+
+    // Left: Search
+    const searchOverlay = (
+        <div
+            style={{ position: "absolute", zIndex: 1000, left: 10, top: 10, width: 360, pointerEvents: "auto" }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div style={{ background: "rgba(255,255,255,0.97)", border: "1px solid #ddd", borderRadius: 12, padding: 10, boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}>
+                <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search name, address, phone… (Enter opens first)"
+                    onKeyDown={(e) => { if (e.key === "Enter" && results.length) focusResult(results[0]); }}
+                    style={{ width: "100%", height: 36, borderRadius: 8, border: "1px solid #ccc", padding: "0 10px", outline: "none" }}
+                />
+                {q.trim() && (
+                    <div style={{ marginTop: 8, borderTop: "1px solid #eee", maxHeight: 260, overflowY: "auto", borderRadius: 8 }}>
+                        {results.length === 0 ? (
+                            <div style={{ padding: "8px 6px", fontSize: 12, opacity: 0.7 }}>No matches</div>
+                        ) : (
+                            results.map((r) => {
+                                const id = sid(r.id);
+                                const ll = getLL(r);
+                                const sub = `${r.address || ""}${r.apt ? " " + r.apt : ""}`.trim()
+                                    || [r.city, r.state, r.zip].filter(Boolean).join(" ");
+                                return (
+                                    <button
+                                        key={id}
+                                        type="button"
+                                        onClick={() => focusResult(r)}
+                                        style={{ width: "100%", textAlign: "left", padding: "8px 10px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 6, cursor: ll ? "pointer" : "not-allowed", opacity: ll ? 1 : 0.6 }}
+                                        title={r.__driverId ? `Driver: ${r.__driverName}` : "Unrouted"}
+                                    >
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                            <span style={{ width: 12, height: 12, borderRadius: 3, background: r.__color || "#999", border: "1px solid rgba(0,0,0,0.2)" }} />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name || "(Unnamed)"}</div>
+                                                <div style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
+                                            </div>
+                                            {r.__driverId != null && <div style={{ fontSize: 11, opacity: 0.8 }}>{r.__driverName}</div>}
+                                        </div>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
+    // Right: Tools + legend + bulk assign
+    const rightPanel = (
         <div
             style={{
                 position: "absolute",
                 zIndex: 1000,
-                left: 10,
-                top: 10,
-                width: 360,
+                top: 12,
+                right: 12,
+                width: 320,
                 display: "flex",
                 flexDirection: "column",
                 gap: 10,
-                pointerEvents: "none",
+                pointerEvents: "auto",
             }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
         >
+            {/* Selection / Bulk bar */}
             {(selectedCount > 0 || hoverIds.size > 0) && (
                 <div
                     style={{
-                        pointerEvents: "auto",
                         background: "rgba(255,255,255,0.98)",
                         border: "1px solid #cde",
                         borderRadius: 12,
@@ -679,7 +751,7 @@ export default function DriversMapLeaflet({
                             ))}
                         </select>
                         <button
-                            onClick={applyBulkAssign}
+                            onClick={() => applyBulkAssign(bulkDriverId)}
                             disabled={!bulkDriverId || bulkBusy || selectedCount === 0}
                             style={{
                                 padding: "8px 10px",
@@ -721,36 +793,16 @@ export default function DriversMapLeaflet({
                 </div>
             )}
 
-            {/* Close */}
-            <div style={{ pointerEvents: "auto" }}>
-                <button
-                    onClick={onClose}
-                    style={{
-                        width: "100%",
-                        padding: "8px 10px",
-                        borderRadius: 12,
-                        border: "1px solid #ddd",
-                        background: "#fff",
-                        cursor: "pointer",
-                        fontWeight: 600,
-                        boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-                    }}
-                >
-                    × Close Map
-                </button>
-            </div>
-
-            {/* Legend + toggles */}
+            {/* Toggles + index */}
             <div
                 style={{
-                    pointerEvents: "auto",
                     background: "rgba(255,255,255,0.97)",
                     border: "1px solid #ddd",
                     borderRadius: 12,
                     padding: 10,
                     boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
                     overflow: "auto",
-                    maxHeight: "45vh",
+                    maxHeight: "55vh",
                     display: "flex",
                     flexDirection: "column",
                     gap: 8,
@@ -800,43 +852,14 @@ export default function DriversMapLeaflet({
                     ))}
                 </div>
             </div>
-
-            {/* Search */}
-            <div
-                style={{
-                    pointerEvents: "auto",
-                    background: "rgba(255,255,255,0.97)",
-                    border: "1px solid #ddd",
-                    borderRadius: 12,
-                    padding: 10,
-                    boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-                }}
-            >
-                <input
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search name, address, phone… (Enter opens first)"
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter" && results.length) {
-                            const k = sid(results[0].id);
-                            if (k) {
-                                const dSnap = localDriversRef.current;
-                                const uSnap = localUnroutedRef.current;
-                                const { stop, color } = findStopByIdLocal(k, dSnap, uSnap);
-                                openAssignForStop(stop, color);
-                            }
-                        }
-                    }}
-                    style={{ width: "100%", height: 36, borderRadius: 8, border: "1px solid #ccc", padding: "0 10px", outline: "none" }}
-                />
-            </div>
         </div>
     );
 
     /* ------- Render ------- */
     return (
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
-            {overlay}
+            {searchOverlay}
+            {rightPanel}
 
             <div style={{ height: "100%", width: "100%", borderRadius: 12, overflow: "hidden" }}>
                 <MapContainer
@@ -852,7 +875,7 @@ export default function DriversMapLeaflet({
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
                     <ZoomControl position="bottomleft" />
 
-                    {/* clicked/located halo (clears properly now) */}
+                    {/* halo */}
                     {Number.isFinite(selectedHalo.lat) && Number.isFinite(selectedHalo.lng) && (
                         <CircleMarker
                             center={[selectedHalo.lat, selectedHalo.lng]}

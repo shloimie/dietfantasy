@@ -1,10 +1,9 @@
-// components/DriversDialog.jsx
 "use client";
 
 import * as React from "react";
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, Box, Typography, LinearProgress
+    Button, Box, Typography, LinearProgress, MenuItem, Select, FormControl, InputLabel
 } from "@mui/material";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -13,6 +12,7 @@ const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: fa
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 
+/* =================== helpers / palette =================== */
 const palette = [
     "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
     "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"
@@ -25,7 +25,7 @@ const nameOf = (u = {}) => {
     return addr || "Unnamed";
 };
 
-/* ========= local complex detection (no backend) ========= */
+/* ========= complex detection (unchanged) ========= */
 const toBool = (v) => {
     if (typeof v === "boolean") return v;
     if (typeof v === "number") return v !== 0;
@@ -62,7 +62,6 @@ const llKey = (u) => {
     const gk = Number.isFinite(lng) ? lng.toFixed(4) : "";
     return `${lk}|${gk}`;
 };
-/** Build an index of complex users from the full users list */
 function buildComplexIndex(users = []) {
     const idSet = new Set();
     const nameSet = new Set();
@@ -92,10 +91,8 @@ function buildComplexIndex(users = []) {
     }
     return { idSet, nameSet, phoneSet, addrSet, llSet };
 }
-/** Mark a single stop complex if ANY key matches */
 function markStopComplex(stop, idx, idxs) {
     const s = stop || {};
-    // direct flags first
     const direct =
         toBool(s?.complex) ||
         toBool(s?.isComplex) ||
@@ -105,7 +102,6 @@ function markStopComplex(stop, idx, idxs) {
         toBool(s?.client?.complex);
     if (direct) return { ...s, complex: true, __complexSource: "stop.direct" };
 
-    // id match
     const ids = [
         s.userId, s.userID, s.userid, s?.user?.id, s?.User?.id, s?.client?.id, s.id,
     ].map(v => (v == null ? null : String(v))).filter(Boolean);
@@ -113,7 +109,6 @@ function markStopComplex(stop, idx, idxs) {
         if (idxs.idSet.has(id)) return { ...s, complex: true, __complexSource: "user.id" };
     }
 
-    // name/phone/address/latlng
     const nm = normalize(displayNameLoose(s));
     if (nm && idxs.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
 
@@ -128,12 +123,13 @@ function markStopComplex(stop, idx, idxs) {
 
     return { ...s, complex: false, __complexSource: "none" };
 }
+
 /* ======================================================== */
 
 export default function DriversDialog({
                                           open,
                                           onClose,
-                                          users = [],                 // comes from parent
+                                          users = [],
                                           initialDriverCount = 6,
                                           initialSelectedDay = "all",
                                           onUsersPatched,
@@ -147,7 +143,16 @@ export default function DriversDialog({
     const [mapOpen, setMapOpen] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
 
-    // Manual geocode dialog state
+    // Map API reference (set once via onExpose)
+    const mapApiRef = React.useRef(null);
+
+    // Stats coming from the map (selected count, etc.)
+    const [stats, setStats] = React.useState({ selectedCount: 0, totalAssigned: 0, unroutedVisible: 0, indexItems: [] });
+
+    // Bulk assign UI state (in dialog)
+    const [bulkDriverId, setBulkDriverId] = React.useState("");
+
+    // Manual geocode dialog
     const [missingBatch, setMissingBatch] = React.useState([]);
     const [manualOpen, setManualOpen] = React.useState(false);
 
@@ -169,7 +174,6 @@ export default function DriversDialog({
 
     React.useEffect(() => {
         if (!open) return;
-        // build the missing list from the *prop* users
         const missing = users.filter(u => (u.lat ?? u.latitude) == null || (u.lng ?? u.longitude) == null);
         setMissingBatch(missing);
         setMapOpen(true);
@@ -183,18 +187,12 @@ export default function DriversDialog({
                     fetch(`/api/users/${id}`, {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            lat,
-                            lng,
-                            cascadeStops: true,
-                            ...rest,
-                        }),
+                        body: JSON.stringify({ lat, lng, cascadeStops: true, ...rest }),
                     }).then(async (r) => {
                         if (!r.ok) throw new Error(await r.text().catch(() => `HTTP ${r.status}`));
                     })
                 )
             );
-
             onUsersPatched?.(updates);
             setMissingBatch((prev) => prev.filter((u) => !updates.some((x) => x.id === u.id)));
         } catch (err) {
@@ -203,8 +201,10 @@ export default function DriversDialog({
         }
     }
 
+    // === Single reassign used by the map for individual popup assigns ===
     const handleReassign = React.useCallback(async (stop, toDriverId) => {
         const toId = Number(toDriverId);
+        // optimistic local UI (in dialog routes copy)
         setRoutes(prevRoutes => {
             const next = prevRoutes.map(r => ({ ...r, stops: [...(r.stops || [])] }));
             if (stop.__driverId) {
@@ -223,12 +223,20 @@ export default function DriversDialog({
                 return next;
             }
         });
-        if (!stop.__driverId) setUnrouted(prev => prev.filter(u => String(u.id) !== String(stop.id)));
+        if (!stop.__driverId) {
+            setUnrouted(prev => prev.filter(u => String(u.id) !== String(stop.id)));
+        }
+
         try {
             const res = await fetch("/api/route/reassign", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ day: selectedDay, toDriverId: toId, stopId: Number(stop.id), userId: Number(stop.userId) || undefined }),
+                body: JSON.stringify({
+                    day: selectedDay,
+                    toDriverId: toId,
+                    stopId: Number(stop.id),
+                    userId: Number(stop.userId) || undefined
+                }),
             });
             if (!res.ok) throw new Error(await res.text());
         } catch (e) {
@@ -238,6 +246,7 @@ export default function DriversDialog({
         }
     }, [selectedDay, loadRoutes]);
 
+    // Map-facing drivers (kept in sync with dialog routes)
     const mapDrivers = React.useMemo(() => {
         return routes.map((r, i) => {
             const color = r.color || palette[i % palette.length];
@@ -345,6 +354,32 @@ export default function DriversDialog({
         }
     }
 
+    // ================== Bulk Assign (dialog) ==================
+    const driverOptions = React.useMemo(() =>
+        routes.map(r => ({ id: r.driverId, name: r.driverName || `Driver ${r.driverId}`, color: r.color })), [routes]);
+
+    const canBulkAssign = !!bulkDriverId && stats.selectedCount > 0 && !busy;
+
+    const doBulkAssign = React.useCallback(async () => {
+        if (!mapApiRef.current) return alert("Map not ready.");
+        const to = Number(bulkDriverId);
+        if (!Number.isFinite(to)) return;
+
+        setBusy(true);
+        try {
+            // Exactly the manual flow, but repeated — handled by the map’s sequential loop
+            await mapApiRef.current.applyBulkAssign(to);
+            // Sync with server after map finished local moves
+            await loadRoutes();
+        } catch (err) {
+            console.error("Bulk assign failed:", err);
+            alert(err?.message || "Bulk assign failed");
+            await loadRoutes();
+        } finally {
+            setBusy(false);
+        }
+    }, [bulkDriverId, loadRoutes]);
+
     return (
         <>
             <ManualGeocodeDialog
@@ -397,16 +432,66 @@ export default function DriversDialog({
                     </Box>
                 </DialogTitle>
 
+                {/* Bulk Assign bar (outside the map) */}
+                <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", px: 2, pb: 1 }}>
+                    <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                        Selected on map: <b>{stats.selectedCount}</b>
+                    </Typography>
+
+                    <FormControl size="small" sx={{ minWidth: 220 }}>
+                        <InputLabel id="bulk-driver-label">Assign to driver</InputLabel>
+                        <Select
+                            labelId="bulk-driver-label"
+                            label="Assign to driver"
+                            value={bulkDriverId}
+                            onChange={(e) => setBulkDriverId(e.target.value)}
+                            disabled={busy || driverOptions.length === 0}
+                        >
+                            {driverOptions.map((d) => (
+                                <MenuItem key={d.id} value={d.id}>
+                  <span
+                      style={{
+                          display: "inline-block", width: 12, height: 12, borderRadius: 3,
+                          background: d.color || "#ccc", border: "1px solid rgba(0,0,0,0.2)", marginRight: 8
+                      }}
+                  />
+                                    {d.name} (#{d.id})
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+
+                    <Button
+                        onClick={doBulkAssign}
+                        variant="contained"
+                        disabled={!canBulkAssign}
+                    >
+                        {busy ? "Assigning…" : `Assign ${stats.selectedCount || ""}`}
+                    </Button>
+
+                    <Button
+                        onClick={() => mapApiRef.current?.clearSelection?.()}
+                        disabled={busy || stats.selectedCount === 0}
+                    >
+                        Clear Selection
+                    </Button>
+                </Box>
+
                 <DialogContent dividers sx={{ position: "relative", p: 0 }}>
                     <Box sx={{ height: "100%", width: "100%", position: "relative" }}>
                         <DriversMapLeaflet
                             drivers={mapDrivers}
                             unrouted={unrouted}
                             onReassign={handleReassign}
-                            onClose={() => { setMapOpen(false); onClose?.(); }}
+                            onExpose={(api) => {
+                                // IMPORTANT: do not set state here; just store the ref
+                                mapApiRef.current = api || null;
+                            }}
+                            onComputedStats={(s) => setStats(s)} // safe: called only when values actually changed
                             initialCenter={[40.7128, -74.006]}
                             initialZoom={10}
                         />
+
                         {busy && (
                             <Box
                                 sx={{
@@ -440,13 +525,11 @@ export default function DriversDialog({
                         onClick={async () => {
                             setBusy(true);
                             try {
-                                // 1) force-enrich complex using the authoritative users prop
                                 const idxs = buildComplexIndex(users);
-                                const enriched = (routeStops || []).map((stops, di) =>
+                                const enriched = (routeStops || []).map((stops) =>
                                     (stops || []).map((s, si) => markStopComplex(s, si, idxs))
                                 );
 
-                                // 2) quick console summary so we *see* counts now
                                 const perDriver = enriched.map((stops, i) => ({
                                     driver: i + 1,
                                     complex: stops.filter(x => x.complex).length,
@@ -458,7 +541,6 @@ export default function DriversDialog({
                                 console.info("Complex total:", totalCx);
                                 console.groupEnd();
 
-                                // 3) export — the PDF splits complex to the end and page-breaks drivers
                                 await exportRouteLabelsPDF(enriched, driverColors, tsString);
                             } finally {
                                 setBusy(false);

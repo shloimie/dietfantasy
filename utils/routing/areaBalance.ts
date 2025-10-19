@@ -1,16 +1,18 @@
-// Outliers-to-Driver0 via 10mi components -> DP cuts with size bounds & angular compactness -> NN -> 2-opt -> rotate to DF
+// Outliers-to-Driver0 via 10mi components -> DP cuts with size bounds & angular compactness
+// -> Cheapest Insertion seed (farthest pair) -> 2-opt (many passes) -> rotate to DF
+
 export type LatLng = { id: number; lat: number | string; lng: number | string };
 
 /** Diet Fantasy HQ */
 const DF = { lat: 41.146139747821344, lng: -73.98944108338935 };
 
 /** ---- Tunables ---- */
-const TEN_MI_KM = 16.09344;                // 10 miles in km
-const MIN_CLUSTER_SIZE = 3;                 // components smaller than this -> Driver 0
+const TEN_MI_KM = 16.09344;                 // 10 miles in km
+const MIN_CLUSTER_SIZE = 3;                  // components smaller than this -> Driver 0
 const SLACK_PERC_SEQUENCE = [0.15, 0.25, 0.35, 0.50]; // size slack for DP balance
 
-// Weights in chunk compactness cost
-const DIAG_WEIGHT = 1000;
+// Weights in chunk compactness cost (slightly stronger diag penalty)
+const DIAG_WEIGHT = 1200;
 const SIZE_PENALTY = 0.25;
 const ANGULAR_WEIGHT = 300;
 
@@ -24,9 +26,13 @@ function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: numbe
     const R = 6371;
     const dLat = (b.lat - a.lat) * Math.PI / 180;
     const dLng = (b.lng - a.lng) * Math.PI / 180;
-    const sa = Math.sin(dLat / 2), sb = Math.sin(dLng / 2);
-    const A = sa * sa + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * sb * sb;
-    return 2 * R * Math.asin(Math.sqrt(A));
+    const lat1 = a.lat * Math.PI / 180;
+    const lat2 = b.lat * Math.PI / 180;
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLng = Math.sin(dLng / 2);
+    const x = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+    const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    return R * c;
 }
 
 function quotas(n: number, k: number) {
@@ -66,35 +72,46 @@ function toGrid(
     return { x, y };
 }
 
-/* --------------- intra-chunk ordering --------------- */
+/* ---------------- intra-chunk ordering ---------------- */
 type P = { id: number; lat: number; lng: number };
 
-function nnOrder(points: P[]) {
+/** Seed route with the farthest pair, then cheapest-insertion, then 2-opt */
+function orderCheapestInsertion(points: P[]) {
     if (points.length <= 2) return points.map(p => p.id);
-    const centroid = {
-        lat: points.reduce((s, p) => s + p.lat, 0) / points.length,
-        lng: points.reduce((s, p) => s + p.lng, 0) / points.length,
-    };
-    let start = 0, best = Infinity;
+
+    // find farthest pair
+    let a = 0, b = 1, best = -1;
     for (let i = 0; i < points.length; i++) {
-        const d = haversine(centroid, points[i]);
-        if (d < best) { best = d; start = i; }
-    }
-    const remaining = points.slice();
-    const route: P[] = [remaining.splice(start, 1)[0]];
-    while (remaining.length) {
-        const last = route[route.length - 1];
-        let ni = 0, nd = Infinity;
-        for (let i = 0; i < remaining.length; i++) {
-            const d = haversine(last, remaining[i]);
-            if (d < nd) { nd = d; ni = i; }
+        for (let j = i + 1; j < points.length; j++) {
+            const d = haversine(points[i], points[j]);
+            if (d > best) { best = d; a = i; b = j; }
         }
-        route.push(remaining.splice(ni, 1)[0]);
     }
-    return route.map(p => p.id);
+
+    const unused = points.map((p, i) => i).filter(i => i !== a && i !== b);
+    let routeIdxs = [a, b]; // route is array of indices into points
+
+    // cheapest insertion
+    while (unused.length) {
+        let bestIns = { idxInUnused: 0, pos: 1, cost: Infinity };
+        for (let uu = 0; uu < unused.length; uu++) {
+            const pi = unused[uu];
+            for (let pos = 0; pos < routeIdxs.length; pos++) {
+                const q = routeIdxs[pos];
+                const r = routeIdxs[(pos + 1) % routeIdxs.length];
+                const cost = haversine(points[q], points[pi]) + haversine(points[pi], points[r]) - haversine(points[q], points[r]);
+                if (cost < bestIns.cost) bestIns = { idxInUnused: uu, pos: pos + 1, cost };
+            }
+        }
+        const [take] = unused.splice(bestIns.idxInUnused, 1);
+        routeIdxs.splice(bestIns.pos, 0, take);
+    }
+
+    // return id order
+    return routeIdxs.map(i => points[i].id);
 }
 
-function twoOpt(ids: number[], idToPt: Map<number, P>, maxPasses = 1) {
+function twoOpt(ids: number[], idToPt: Map<number, P>, maxPasses = 25) {
     const n = ids.length; if (n < 4) return ids;
     const D = (i: number, j: number) => haversine(idToPt.get(ids[i])!, idToPt.get(ids[j])!);
     let improved = true, pass = 0;
@@ -126,7 +143,7 @@ function rotateIdsToDF(ids: number[], idToPt: Map<number, P>) {
     return bestIdx === 0 ? ids : ids.slice(bestIdx).concat(ids.slice(0, bestIdx));
 }
 
-/* --------------- angles for compactness --------------- */
+/* ---------------- angular helpers ---------------- */
 function angleFromDF(p: P) {
     const dy = p.lat - DF.lat, dx = p.lng - DF.lng;
     return Math.atan2(dy, dx);
@@ -139,7 +156,7 @@ function circularVariance(angles: number[]) {
     return 1 - R;
 }
 
-/* --------------- components at 10 miles --------------- */
+/* ---------------- 10-mile components + strict D0 split ---------------- */
 type Component = { ids: number[]; pts: P[] };
 
 function buildComponents(points: P[], radiusKm = TEN_MI_KM): Component[] {
@@ -173,12 +190,14 @@ function buildComponents(points: P[], radiusKm = TEN_MI_KM): Component[] {
 function splitOutliersByComponents(points: P[]) {
     const comps = buildComponents(points, TEN_MI_KM);
     if (comps.length <= 1) {
+        // STRICT: if single tiny component, send to D0; else keep all
         if (comps.length === 1 && comps[0].ids.length < MIN_CLUSTER_SIZE) {
             return { keep: [] as P[], toD0: comps[0].pts };
         }
         return { keep: points, toD0: [] as P[] };
     }
 
+    // min inter-component distances
     const compMinDist: number[] = comps.map(() => Infinity);
     for (let a = 0; a < comps.length; a++) {
         for (let b = a + 1; b < comps.length; b++) {
@@ -205,10 +224,11 @@ function splitOutliersByComponents(points: P[]) {
         else keep.push(...c.pts);
     });
 
+    // STRICT: do NOT relax (no re-merging outliers into keep)
     return { keep, toD0 };
 }
 
-/* --------------- compactness + bounded DP cuts --------------- */
+/* ---------------- compactness + bounded DP cuts ---------------- */
 function chunkCost(sorted: P[], i: number, jInclusive: number) {
     if (jInclusive < i) return 0;
     if (i === jInclusive) return 0.05;
@@ -274,7 +294,7 @@ function chooseCutsDPWithQuotas(sorted: P[], k: number) {
     return out;
 }
 
-/* --------------- main --------------- */
+/* ---------------- main ---------------- */
 export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) {
     if (driverCount <= 0) throw new Error("driverCount must be >= 1");
 
@@ -287,13 +307,23 @@ export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) 
         return [{ driverIndex: 0, center: { lat: 0, lng: 0 }, stopIds: [], count: 0 }];
     }
 
-    // Split: outliers/tiny components → Driver 0
+    // STRICT: Split outliers/tiny components → Driver 0 (no relaxation)
     const { keep, toD0 } = splitOutliersByComponents(geocoded);
+    const keepPoints = keep;               // never “relax”
+    const toD0Points = toD0;
 
-    // Relax if rule was too strict
-    const keepPoints = keep.length ? keep : geocoded;
-    const toD0Points = keep.length ? toD0 : [];
+    // If nothing left for regular drivers, just return Driver 0 bucket
+    if (!keepPoints.length) {
+        const d0Sorted = toD0Points.slice().sort((a, b) => angleFromDF(a) - angleFromDF(b)).map(p => p.id);
+        return [{
+            driverIndex: 0,
+            center: toD0Points.length ? { lat: toD0Points[0].lat, lng: toD0Points[0].lng } : { lat: 0, lng: 0 },
+            stopIds: d0Sorted,
+            count: d0Sorted.length,
+        }];
+    }
 
+    // Make a Morton-sorted master list (we’ll cut contiguous spans by DP)
     const idToPt = new Map<number, P>(keepPoints.map(p => [p.id, p]));
     const minLat = Math.min(...keepPoints.map(p => p.lat));
     const maxLat = Math.max(...keepPoints.map(p => p.lat));
@@ -315,9 +345,9 @@ export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) 
             .sort((a, b) => a.code - b.code)
             .map(x => x.p);
 
-        const q = quotas(keepPoints.length, driverCount);
+        const q = quotas(keepPoints.length, Math.min(driverCount, keepPoints.length));
         let off = 0, score = 0;
-        for (let i = 0; i < driverCount; i++) {
+        for (let i = 0; i < q.length; i++) {
             const sz = q[i];
             score += chunkCost(sorted, off, off + sz - 1);
             off += sz;
@@ -325,15 +355,17 @@ export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) 
         if (score < bestScore) { bestScore = score; bestSorted = sorted; }
     }
 
-    const bounds = chooseCutsDPWithQuotas(bestSorted, Math.min(driverCount, bestSorted.length));
+    const k = Math.min(driverCount, bestSorted.length);
+    const bounds = chooseCutsDPWithQuotas(bestSorted, k);
 
     const planned: { driverIndex: number; center: { lat: number; lng: number }; stopIds: number[]; count: number }[] = [];
     for (let i = 0; i < bounds.length; i++) {
         const [s, e] = bounds[i];
         const chunk = bestSorted.slice(s, e);
 
-        let ids = nnOrder(chunk);
-        ids = twoOpt(ids, idToPt, 1);
+        // stronger ordering: cheapest insertion seed + 2-opt (many passes) + rotate toward DF
+        let ids = orderCheapestInsertion(chunk);
+        ids = twoOpt(ids, idToPt, 25);
         ids = rotateIdsToDF(ids, idToPt);
 
         const center = {
@@ -344,10 +376,8 @@ export function planRoutesByAreaBalanced(points: LatLng[], driverCount: number) 
         planned.push({ driverIndex: i + 1, center, stopIds: ids, count: ids.length });
     }
 
-    const d0Sorted = toD0Points.slice()
-        .sort((a, b) => angleFromDF(a) - angleFromDF(b))
-        .map(p => p.id);
-
+    // Driver 0 transfer bucket (sorted by angle around DF)
+    const d0Sorted = toD0Points.slice().sort((a, b) => angleFromDF(a) - angleFromDF(b)).map(p => p.id);
     const transferBucket = {
         driverIndex: 0,
         center: toD0Points.length ? { lat: toD0Points[0].lat, lng: toD0Points[0].lng } : { lat: 0, lng: 0 },

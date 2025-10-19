@@ -2,15 +2,10 @@
 "use client";
 
 import * as React from "react";
-import {
-    Box,
-    Dialog,
-    TextField,
-    IconButton,
-    InputAdornment,
-} from "@mui/material";
-import ClearIcon from "@mui/icons-material/Clear";
-import { useState } from "react";
+import Image from "next/image";
+import { Box, Dialog, IconButton } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 
 import UsersTable from "../components/UsersTable";
 import ActionBar from "../components/ActionBar";
@@ -26,9 +21,7 @@ function useUsersApi() {
     const [users, setUsers] = React.useState([]);
     const [loading, setLoading] = React.useState(true);
 
-    // called by DriversDialog after successful PUTs
     const onUsersPatched = React.useCallback((updates) => {
-        // updates: [{ id, lat, lng }]
         setUsers((prev) =>
             prev.map((u) => {
                 const hit = updates.find((x) => x.id === u.id);
@@ -68,7 +61,7 @@ function useCityColorsApi() {
     const fetchCityColors = React.useCallback(async () => {
         try {
             const res = await fetch("/api/city-colors", { cache: "no-store" });
-            const rows = await res.json(); // [{ id, city, color }]
+            const rows = await res.json();
             const map = {};
             for (const r of rows || []) {
                 const key = norm(r.city);
@@ -124,7 +117,7 @@ function useCityColorsApi() {
     return {
         cityColors,
         getCityColor,
-        setCityColors, // local state override if needed
+        setCityColors,
         fetchCityColors,
         upsertCityColor,
         removeCityColor,
@@ -147,7 +140,7 @@ function tsString() {
 }
 
 /* =========================
-   Complex detection & enrichment (FORCE)
+   Complex detection (restored)
    ========================= */
 const toBool = (v) => {
     if (typeof v === "boolean") return v;
@@ -158,7 +151,6 @@ const toBool = (v) => {
     }
     return false;
 };
-
 const displayNameLoose = (u = {}) => {
     const cands = [
         u.name,
@@ -170,32 +162,22 @@ const displayNameLoose = (u = {}) => {
     ].filter(Boolean);
     return cands[0] || "";
 };
-
 const normalizeName = (s) =>
-    String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "").trim();
-
-const normalizePhone = (s) => String(s || "").replace(/\D+/g, "").replace(/^1/, ""); // strip +1
+    String(s || "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[^\p{L}\p{N}\s]/gu, "")
+        .trim();
+const normalizePhone = (s) => String(s || "").replace(/\D+/g, "").replace(/^1/, "");
 const normalizeAddr = (u = {}) =>
     normalizeName(
-        [
-            u.address || u.addr || "",
-            u.apt || u.unit || "",
-            u.city || "",
-            u.state || "",
-            u.zip || "",
-        ]
+        [u.address || u.addr || "", u.apt || u.unit || "", u.city || "", u.state || "", u.zip || ""]
             .filter(Boolean)
             .join(", ")
     );
-
 const latKey = (lat) => (typeof lat === "number" ? lat.toFixed(4) : "");
 const lngKey = (lng) => (typeof lng === "number" ? lng.toFixed(4) : "");
 const latLngKey = (u) => `${latKey(u.lat ?? u.latitude)}|${lngKey(u.lng ?? u.longitude)}`;
-
-/**
- * Build FORCE index of complex users from full users list.
- * Keys: id, normalized name, phone, address, latlng.
- */
 function buildForceComplexIndex(users = []) {
     const idSet = new Set();
     const nameSet = new Set();
@@ -223,17 +205,10 @@ function buildForceComplexIndex(users = []) {
         const ll = latLngKey(u);
         if (ll !== "|") llSet.add(ll);
     }
-
     return { idSet, nameSet, phoneSet, addrSet, llSet };
 }
-
-/**
- * Force-mark a stop as complex if it matches ANY of the complex index keys.
- */
 function markStopComplex(stop, forceIdx) {
     const s = stop || {};
-
-    // respect any direct flags first
     const direct =
         toBool(s?.complex) ||
         toBool(s?.isComplex) ||
@@ -242,39 +217,18 @@ function markStopComplex(stop, forceIdx) {
         toBool(s?.User?.complex) ||
         toBool(s?.client?.complex);
     if (direct) return { ...s, complex: true };
-
-    // id-based
-    const ids = [
-        s.userId,
-        s.userID,
-        s.userid,
-        s?.user?.id,
-        s?.User?.id,
-        s?.client?.id,
-        s.id, // sometimes stop == user
-    ]
+    const ids = [s.userId, s.userID, s.userid, s?.user?.id, s?.User?.id, s?.client?.id, s.id]
         .map((v) => (v == null ? null : String(v)))
         .filter(Boolean);
-    for (const id of ids) {
-        if (forceIdx.idSet.has(id)) return { ...s, complex: true };
-    }
-
-    // name-based
+    for (const id of ids) if (forceIdx.idSet.has(id)) return { ...s, complex: true };
     const nm = normalizeName(displayNameLoose(s));
     if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true };
-
-    // phone-based
     const ph = normalizePhone(s.phone || s?.user?.phone);
     if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true };
-
-    // address-based
     const ak = normalizeAddr(s);
     if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true };
-
-    // lat/lng-based
     const ll = latLngKey(s);
     if (ll !== "|" && forceIdx.llSet.has(ll)) return { ...s, complex: true };
-
     return { ...s, complex: false };
 }
 
@@ -284,7 +238,6 @@ function markStopComplex(stop, forceIdx) {
 export default function UsersPage() {
     const { users, isLoading, refetch, onUsersPatched } = useUsersApi();
 
-    // City colors (DB as source of truth)
     const {
         cityColors,
         getCityColor,
@@ -296,299 +249,187 @@ export default function UsersPage() {
 
     // Modals
     const [userModalOpen, setUserModalOpen] = React.useState(false);
+    const [editingUser, setEditingUser] = React.useState(null);
     const [driversOpen, setDriversOpen] = React.useState(false);
     const [cityColorsOpen, setCityColorsOpen] = React.useState(false);
 
     // Map modal + data
     const [mapOpen, setMapOpen] = React.useState(false);
-    const [mapData, setMapData] = React.useState({
-        routes: [],
-        selectedDay: "all",
-        driverCount: 6,
-    });
-    const [selectedDay, setSelectedDay] = useState("all"); // reserved
+    const [mapData, setMapData] = React.useState({ routes: [], selectedDay: "all", driverCount: 6 });
 
-    // Search + sort
-    const [query, setQuery] = React.useState("");
-    const [sortKey, setSortKey] = React.useState(null);
-    const [sortAsc, setSortAsc] = React.useState(true);
+    // Header shelf control (chin)
+    const [openMore, setOpenMore] = React.useState(false);
 
-    const onSort = React.useCallback(
-        (key) => {
-            setSortAsc((prev) => (key === sortKey ? !prev : true));
-            setSortKey(key);
-        },
-        [sortKey]
-    );
+    // Search + counters + visible rows (from table)
+    const [search, setSearch] = React.useState("");
+    const [visibleCount, setVisibleCount] = React.useState(0);
+    const [visibleRows, setVisibleRows] = React.useState([]);
 
-    const displayedUsers = React.useMemo(() => {
-        const normalizedQuery = query.trim().toLowerCase();
-        const source = Array.isArray(users) ? users : [];
-
-        // filter
-        const filtered = !normalizedQuery
-            ? source
-            : source.filter((u) => {
-                const fields = [
-                    "first",
-                    "last",
-                    "address",
-                    "apt",
-                    "city",
-                    "county",
-                    "zip",
-                    "state",
-                    "phone",
-                    "dislikes",
-                    "medicaid",
-                ];
-                let hay = fields
-                    .map((k) => {
-                        const v = u?.[k];
-                        if (k === "medicaid") return v ? "yes" : "no";
-                        return v == null ? "" : String(v);
-                    })
-                    .join(" ")
-                    .toLowerCase();
-
-                if (u?.schedule) {
-                    const days = [
-                        "monday",
-                        "tuesday",
-                        "wednesday",
-                        "thursday",
-                        "friday",
-                        "saturday",
-                        "sunday",
-                    ];
-                    const short = ["m", "t", "w", "th", "f", "sa", "su"].filter(
-                        (_, i) => u.schedule[days[i]]
-                    );
-                    hay += " " + short.join(" ");
-                }
-                return hay.includes(normalizedQuery);
-            });
-
-        // sort
-        if (!sortKey) return filtered;
-        const arr = filtered.slice();
-        arr.sort((a, b) => {
-            const av = (a?.[sortKey] ?? "").toString().toLowerCase();
-            const bv = (b?.[sortKey] ?? "").toString().toLowerCase();
-            if (av < bv) return sortAsc ? -1 : 1;
-            if (av > bv) return sortAsc ? 1 : -1;
-            return 0;
-        });
-        return arr;
-    }, [users, query, sortKey, sortAsc]);
-
-    /* ===== Actions (exports) ===== */
-    const handleExportExcel = React.useCallback(async () => {
+    // exports (operate on current visibleRows)
+    const doExportExcel = React.useCallback(async () => {
         try {
             const mod = await import("../utils/excelExport");
-            const fn =
-                mod.default ||
-                mod.exportExcel ||
-                mod.exportUsersToExcel ||
-                mod.exportToExcel;
-            if (typeof fn === "function") {
-                await fn(displayedUsers, tsString);
-            } else {
-                console.warn("excelExport: no callable export found");
-            }
+            const fn = mod.default || mod.exportExcel || mod.exportUsersToExcel || mod.exportToExcel;
+            if (typeof fn === "function") await fn(visibleRows, tsString);
         } catch (e) {
             console.error("Export Excel failed:", e);
         }
-    }, [displayedUsers]);
+    }, [visibleRows]);
 
-    const handleExportClientsPdf = React.useCallback(async () => {
+    const doExportClientsPdf = React.useCallback(async () => {
         try {
             const mod = await import("../utils/pdfClientList");
-            const fn =
-                mod.default || mod.buildClientListPDF || mod.exportClientListPDF;
+            const fn = mod.default || mod.buildClientListPDF || mod.exportClientListPDF;
             if (typeof fn === "function") {
-                const doc = await fn(displayedUsers, tsString);
+                const doc = await fn(visibleRows, tsString);
                 if (doc?.save) doc.save(`clients ${tsString()}.pdf`);
-            } else {
-                console.warn("pdfClientList: no callable export found");
             }
         } catch (e) {
             console.error("Export Clients PDF failed:", e);
         }
-    }, [displayedUsers]);
+    }, [visibleRows]);
 
-
-    // === ROUTE-ORDERED LABELS via backend enrichment ===
-    // === ROUTE-ORDERED LABELS via backend enrichment (with debug) ===
-    const handleExportLabels = React.useCallback(async () => {
+    const doExportLabels = React.useCallback(async () => {
         try {
             const routes = Array.isArray(mapData?.routes) ? mapData.routes : [];
-            if (!routes.length) {
-                console.warn("[Route Labels] No routes in memory. Open “Routes” → Show Map first.");
-                return;
-            }
-
-            // Ask backend to ENRICH and include diagnostics
+            if (!routes.length) return;
             const res = await fetch("/api/labels/enrich", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    routes,
-                    users,       // the full users list you already fetched on page load
-                    strict: false,
-                    debug: true, // <— turn on verbose diag
-                }),
+                body: JSON.stringify({ routes, users, strict: false, debug: true }),
             });
-            if (!res.ok) {
-                console.error("Enrich API failed:", res.status);
-                return;
-            }
-            const { routes: enrichedRoutes, diag } = await res.json();
-
-            // Frontend diagnostics
-            console.groupCollapsed("[Route Labels] Backend diag");
-            console.log("drivers:", diag?.driversCount, "stops:", diag?.stopsCount, "users:", diag?.usersCount);
-            console.log("usersComplex:", diag?.usersComplex, "keySizes:", diag?.keySizes);
-            console.table(diag?.perDriver || []);
-            console.log("sampleComplexUsers:", diag?.sampleComplexUsers || []);
-            console.log("sampleEnrichedComplexStops:", diag?.sampleEnrichedComplexStops || []);
-            console.info("Complex total (server):", diag?.totalComplex ?? "n/a");
-            console.groupEnd();
-
-            // Export PDF
+            if (!res.ok) return;
+            const { routes: enrichedRoutes } = await res.json();
             const mod = await import("../utils/pdfRouteLabels");
             const fn = mod.exportRouteLabelsPDF || mod.default;
-            if (typeof fn !== "function") {
-                console.error("pdfRouteLabels: exportRouteLabelsPDF not found");
-                return;
-            }
-            await fn(enrichedRoutes, null, tsString);
+            if (typeof fn === "function") await fn(enrichedRoutes, null, tsString);
         } catch (e) {
             console.error("Export Route Labels failed:", e);
         }
     }, [mapData?.routes, users]);
 
-
-    /* ===== Edit/Delete wiring ===== */
-    const [editingUser, setEditingUser] = React.useState(null);
-
-    const handleEdit = React.useCallback((u) => {
-        setEditingUser(u || null);
-        setUserModalOpen(true);
-    }, []);
-
-    const handleDelete = React.useCallback(
-        async (id) => {
-            if (!id) return;
-            if (!confirm("Delete this user?")) return;
-            try {
-                await fetch(`/api/users/${id}`, { method: "DELETE" });
-                await refetch();
-            } catch (e) {
-                console.error("Delete failed", e);
-                alert("Delete failed");
-            }
-        },
-        [refetch]
-    );
-
-    const [showDetails, setShowDetails] = React.useState(false);
-
     return (
-        <Box sx={{ width: "100%", m: 0, p: 2 }}>
-            {/* Search + live total + subtle details toggle */}
+        <Box
+            component="main"
+            data-page="users"
+            sx={{
+                height: "100vh",             // lock viewport height
+                width: "100vw",
+                bgcolor: "#7ed6a7",
+                p: "30px",
+                overflow: "hidden",          // prevent page scroll
+                display: "grid",
+                gridTemplateRows: "auto 1fr", // header + scrollable table area
+                gap: 8,
+            }}
+        >
+            {/* Header card (NOT sticky; page doesn't scroll anyway) */}
             <Box
                 sx={{
-                    mb: 2,
-                    mt: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 2,
-                    flexWrap: "wrap",
-                    justifyContent: "space-between",
+                    position: "relative",
+                    zIndex: 2,
+                    bgcolor: "#fff",
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    borderRadius: 3,
+                    boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
+                    px: 3,
+                    pt: 2.25,
+                    pb: 5,           // room for chin overlap
+                    overflow: "visible",
                 }}
             >
-                {/* Search input */}
-                <TextField
-                    size="small"
-                    fullWidth
-                    label="Search clients (name, address, city, phone, etc.)"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    InputProps={{
-                        endAdornment: query ? (
-                            <InputAdornment position="end">
-                                <IconButton
-                                    aria-label="Clear search"
-                                    onClick={() => setQuery("")}
-                                    edge="end"
-                                >
-                                    <ClearIcon />
-                                </IconButton>
-                            </InputAdornment>
-                        ) : null,
-                    }}
-                    sx={{ flex: 1 }}
-                />
+                <Box sx={{ display: "flex", justifyContent: "center", mb: 2.5 }}>
+                    <Image
+                        src="https://thedietfantasy.com/wp-content/uploads/2023/07/logos-03-03.png"
+                        alt="The Diet Fantasy"
+                        width={420}
+                        height={126}
+                        priority
+                        style={{ height: 92, width: "auto" }}
+                    />
+                </Box>
 
-                {/* Right side: Total count + toggle */}
-                <Box
+                {/* Floating Action Bar */}
+                <Box sx={{ position: "relative", zIndex: 3 }}>
+                    <ActionBar
+                        busy={isLoading}
+                        search={search}
+                        setSearch={setSearch}
+                        total={visibleCount}
+                        openMore={openMore}
+                        setOpenMore={setOpenMore}
+                        onAddUser={() => {
+                            setEditingUser(null);
+                            setUserModalOpen(true);
+                        }}
+                        onExportExcel={doExportExcel}
+                        onExportClientPdf={doExportClientsPdf}
+                        onExportLabels={doExportLabels}
+                        onOpenCityColors={() => setCityColorsOpen(true)}
+                        onOpenDrivers={() => setDriversOpen(true)}
+                    />
+                </Box>
+
+                {/* CHIN tucked UNDER the pill so its outline is hidden */}
+                {/* Floating toggle button (no chin) */}
+                <IconButton
+                    onClick={() => setOpenMore((v) => !v)}
+                    aria-label={openMore ? "Hide more actions" : "Show more actions"}
+                    size="medium"
                     sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        whiteSpace: "nowrap",
+                        position: "absolute",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        bottom: -28,                            // same spot where chin used to hang
+                        width: 48,
+                        height: 48,
+                        background: "#fff",
+                        border: "1px solid rgba(0,0,0,0.10)",
+                        borderRadius: "50%",
+                        boxShadow: "0 8px 20px rgba(0,0,0,0.12)",
+                        zIndex: 3,                              // above the header surface
+                        "&:hover": { background: "#fff" },
                     }}
                 >
-                    <Box sx={{ color: "text.secondary", fontSize: 14 }}>
-                        Total: {displayedUsers.length}
-                    </Box>
+                    {openMore ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                </IconButton>
 
-                    {/* Subtle expand toggle */}
-                    <IconButton
-                        size="small"
-                        onClick={() => setShowDetails((v) => !v)}
-                        sx={{
-                            border: "1px solid #ccc",
-                            borderRadius: 1,
-                            padding: "2px 6px",
-                            fontSize: 12,
-                            color: showDetails ? "primary.main" : "text.secondary",
-                            backgroundColor: showDetails ? "action.hover" : "transparent",
-                            "&:hover": { backgroundColor: "action.selected" },
-                        }}
-                        title={showDetails ? "Hide extra columns" : "Show extra columns"}
-                    >
-                        {showDetails ? "−" : "+"}
-                    </IconButton>
-                </Box>
+
             </Box>
 
-            {/* Top actions */}
-            <ActionBar
-                busy={isLoading}
-                onAddUser={() => {
-                    setEditingUser(null);
-                    setUserModalOpen(true);
+            {/* Scrollable content area (this is the ONLY scroller) */}
+            <Box
+                sx={{
+                    minHeight: 0,
+                    overflow: "hidden",               // the table inside handles scrollbars
+                    bgcolor: "#fff",
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    borderRadius: 3,
+                    // px: 2,
+                    // pt: 4,                             // extra space so rows never touch the chin
+                    // pb: 5,
+                    position: "relative",
                 }}
-                onExportExcel={handleExportExcel}
-                onExportClientPdf={handleExportClientsPdf}
-                onExportLabels={handleExportLabels}
-                onOpenCityColors={() => setCityColorsOpen(true)}
-                onOpenDrivers={() => setDriversOpen(true)}
-            />
-
-            {/* Users table */}
-            <UsersTable
-                users={displayedUsers}
-                getCityColor={getCityColor}
-                onSort={onSort}
-                sortKey={sortKey}
-                sortAsc={sortAsc}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-                showDetails={showDetails}
-            />
+            >
+                {/* UsersTable owns its own scrollbars (both directions) */}
+                <UsersTable
+                    users={users}
+                    search={search}
+                    getCityColor={getCityColor}
+                    onVisibleCountChange={setVisibleCount}
+                    onVisibleRowsChange={setVisibleRows}
+                    onEdit={(u) => {
+                        setEditingUser(u);
+                        setUserModalOpen(true);
+                    }}
+                    onDelete={async (id) => {
+                        if (!id) return;
+                        if (!confirm("Delete this user?")) return;
+                        await fetch(`/api/users/${id}`, { method: "DELETE" });
+                        await refetch();
+                    }}
+                />
+            </Box>
 
             {/* Modals */}
             <UserModal
@@ -610,19 +451,12 @@ export default function UsersPage() {
                 }}
                 cityColors={cityColors}
                 onSave={async (newMap) => {
-                    const newEntries = Object.entries(newMap || {});
-                    const newKeys = new Set(newEntries.map(([k]) => norm(k)));
-
-                    for (const [city, hex] of newEntries) {
-                        await upsertCityColor(city, hex);
-                    }
-
+                    const entries = Object.entries(newMap || {});
+                    const newKeys = new Set(entries.map(([k]) => norm(k)));
+                    for (const [city, hex] of entries) await upsertCityColor(city, hex);
                     for (const oldCity of Object.keys(cityColors)) {
-                        if (!newKeys.has(norm(oldCity))) {
-                            await removeCityColor(oldCity);
-                        }
+                        if (!newKeys.has(norm(oldCity))) await removeCityColor(oldCity);
                     }
-
                     setCityColors(newMap || {});
                     await fetchCityColors();
                 }}
@@ -641,7 +475,6 @@ export default function UsersPage() {
                 onUsersPatched={onUsersPatched}
             />
 
-            {/* Map modal */}
             <Dialog open={mapOpen} onClose={() => setMapOpen(false)} fullWidth maxWidth="lg">
                 <div style={{ height: 600 }}>
                     <DriversMap
