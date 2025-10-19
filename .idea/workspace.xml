@@ -5,15 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="pre mess with areabalance">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/optimize/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/optimize/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/globals.css" beforeDir="false" afterPath="$PROJECT_DIR$/app/globals.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/page.js" beforeDir="false" afterPath="$PROJECT_DIR$/app/page.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/ActionBar.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/ActionBar.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/UsersTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/UsersTable.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/routing/areaBalance.ts" beforeDir="false" afterPath="$PROJECT_DIR$/utils/routing/areaBalance.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

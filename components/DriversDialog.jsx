@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, Box, Typography, LinearProgress, MenuItem, Select, FormControl, InputLabel
+    Button, Box, Typography, LinearProgress
 } from "@mui/material";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -148,9 +148,6 @@ export default function DriversDialog({
 
     // Stats coming from the map (selected count, etc.)
     const [stats, setStats] = React.useState({ selectedCount: 0, totalAssigned: 0, unroutedVisible: 0, indexItems: [] });
-
-    // Bulk assign UI state (in dialog)
-    const [bulkDriverId, setBulkDriverId] = React.useState("");
 
     // Manual geocode dialog
     const [missingBatch, setMissingBatch] = React.useState([]);
@@ -354,32 +351,6 @@ export default function DriversDialog({
         }
     }
 
-    // ================== Bulk Assign (dialog) ==================
-    const driverOptions = React.useMemo(() =>
-        routes.map(r => ({ id: r.driverId, name: r.driverName || `Driver ${r.driverId}`, color: r.color })), [routes]);
-
-    const canBulkAssign = !!bulkDriverId && stats.selectedCount > 0 && !busy;
-
-    const doBulkAssign = React.useCallback(async () => {
-        if (!mapApiRef.current) return alert("Map not ready.");
-        const to = Number(bulkDriverId);
-        if (!Number.isFinite(to)) return;
-
-        setBusy(true);
-        try {
-            // Exactly the manual flow, but repeated — handled by the map’s sequential loop
-            await mapApiRef.current.applyBulkAssign(to);
-            // Sync with server after map finished local moves
-            await loadRoutes();
-        } catch (err) {
-            console.error("Bulk assign failed:", err);
-            alert(err?.message || "Bulk assign failed");
-            await loadRoutes();
-        } finally {
-            setBusy(false);
-        }
-    }, [bulkDriverId, loadRoutes]);
-
     return (
         <>
             <ManualGeocodeDialog
@@ -431,51 +402,6 @@ export default function DriversDialog({
                         </Box>
                     </Box>
                 </DialogTitle>
-
-                {/* Bulk Assign bar (outside the map) */}
-                <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", px: 2, pb: 1 }}>
-                    <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                        Selected on map: <b>{stats.selectedCount}</b>
-                    </Typography>
-
-                    <FormControl size="small" sx={{ minWidth: 220 }}>
-                        <InputLabel id="bulk-driver-label">Assign to driver</InputLabel>
-                        <Select
-                            labelId="bulk-driver-label"
-                            label="Assign to driver"
-                            value={bulkDriverId}
-                            onChange={(e) => setBulkDriverId(e.target.value)}
-                            disabled={busy || driverOptions.length === 0}
-                        >
-                            {driverOptions.map((d) => (
-                                <MenuItem key={d.id} value={d.id}>
-                  <span
-                      style={{
-                          display: "inline-block", width: 12, height: 12, borderRadius: 3,
-                          background: d.color || "#ccc", border: "1px solid rgba(0,0,0,0.2)", marginRight: 8
-                      }}
-                  />
-                                    {d.name} (#{d.id})
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-
-                    <Button
-                        onClick={doBulkAssign}
-                        variant="contained"
-                        disabled={!canBulkAssign}
-                    >
-                        {busy ? "Assigning…" : `Assign ${stats.selectedCount || ""}`}
-                    </Button>
-
-                    <Button
-                        onClick={() => mapApiRef.current?.clearSelection?.()}
-                        disabled={busy || stats.selectedCount === 0}
-                    >
-                        Clear Selection
-                    </Button>
-                </Box>
 
                 <DialogContent dividers sx={{ position: "relative", p: 0 }}>
                     <Box sx={{ height: "100%", width: "100%", position: "relative" }}>
