@@ -4,12 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="everything for now">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="new map">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/generate/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/generate/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/routing/areaBalance.ts" beforeDir="false" afterPath="$PROJECT_DIR$/utils/routing/areaBalance.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -263,7 +261,15 @@
       <option name="project" value="LOCAL" />
       <updated>1760891409891</updated>
     </task>
-    <option name="localTasksCounter" value="22" />
+    <task id="LOCAL-00022" summary="generateor working">
+      <option name="closed" value="true" />
+      <created>1760892735643</created>
+      <option name="number" value="00022" />
+      <option name="presentableId" value="LOCAL-00022" />
+      <option name="project" value="LOCAL" />
+      <updated>1760892735644</updated>
+    </task>
+    <option name="localTasksCounter" value="23" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -302,6 +308,8 @@
     <MESSAGE value=" leaflet slecetor 2" />
     <MESSAGE value="pre mess with areabalance" />
     <MESSAGE value="everything for now" />
-    <option name="LAST_COMMIT_MESSAGE" value="everything for now" />
+    <MESSAGE value="generateor working" />
+    <MESSAGE value="new map" />
+    <option name="LAST_COMMIT_MESSAGE" value="new map" />
   </component>
 </project>

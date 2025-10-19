@@ -1,12 +1,19 @@
 // app/(mobile)/drivers/[id]/page.jsx
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
+import L from "leaflet";
 import { fetchDriver, fetchStops, setStopCompleted } from "../../../../lib/api";
 import { mapsUrlFromAddress } from "../../../../lib/maps";
-import { CheckCircle2, MapPin, Phone, Clock, Hash, ArrowLeft, Link as LinkIcon, X } from "lucide-react";
+import {
+    CheckCircle2, MapPin, Phone, Clock, Hash, ArrowLeft, Link as LinkIcon, X, Map as MapIcon, Crosshair
+} from "lucide-react";
 import SearchStops from "../../../../components/SearchStops";
+
+/** Lazy-load the shared Leaflet map */
+const DriversMapLeaflet = dynamic(() => import("../../../../components/DriversMapLeaflet"), { ssr: false });
 
 /** Always fetch fresh signature counts */
 async function fetchSignStatus() {
@@ -42,11 +49,21 @@ export default function DriverDetailPage() {
     const router = useRouter();
 
     const [driver, setDriver] = useState(null);
-    const [stops, setStops] = useState([]);      // ordered, server-truth only, with sigCollected
+    const [stops, setStops] = useState([]);       // ordered, server-truth only, with sigCollected
     const [allStops, setAllStops] = useState([]); // for SearchStops, with sigCollected
     const [loading, setLoading] = useState(true);
 
-    // Bottom sheet state
+    // Map sheet state + API from Leaflet
+    const [mapOpen, setMapOpen] = useState(false);
+    const mapApiRef = useRef(null);       // provided by DriversMapLeaflet.onExpose
+    const myLocMarkerRef = useRef(null);  // blue dot
+    const myLocAccuracyRef = useRef(null);// faint ring
+
+    // Geolocation (ask on button click)
+    const [myLoc, setMyLoc] = useState(null); // { lat, lng, acc } or null
+    const askedOnceRef = useRef(false);
+
+    // Signature sheet state
     const [sheetOpen, setSheetOpen] = useState(false);
     const [sheetTitle, setSheetTitle] = useState("");
     const [sheetToken, setSheetToken] = useState(null);
@@ -85,7 +102,7 @@ export default function DriverDetailPage() {
         // 1) Driver (provides stopIds + meta)
         const d = await fetchDriver(id);
 
-        // 2) Stops for this driver from your API (server truth). Ensure your helper uses no-store internally.
+        // 2) Stops for this driver from your API (server truth)
         const every = await fetchStops();
 
         // 3) Signature counts
@@ -139,7 +156,7 @@ export default function DriverDetailPage() {
         }
     };
 
-    const closeSheet = async () => {
+    const closeSignSheet = async () => {
         setSheetOpen(false);
         setSheetToken(null);
         setSheetUrl("");
@@ -159,13 +176,154 @@ export default function DriverDetailPage() {
         return { ok: res.ok, status: res.status, raw, json, url };
     }
 
+    // Single-driver payload for Leaflet
+    const mapDrivers = useMemo(() => {
+        if (!driver) return [];
+        return [{
+            driverId: Number(id),
+            name: driver.name || `Route ${id}`,
+            color: driver.color || "#3665F3",
+            stops: stops || [],
+            polygon: [],
+        }];
+    }, [driver, stops, id]);
+
+    /** Ask for geolocation exactly on button click (gesture-safe) */
+    const requestGeolocationOnce = useCallback(async () => {
+        if (askedOnceRef.current) return; // avoid repeat prompts
+        askedOnceRef.current = true;
+
+        if (!window.isSecureContext || !navigator?.geolocation) {
+            console.debug("Geolocation unavailable: insecure context or missing API");
+            return;
+        }
+
+        try {
+            const perm = await navigator.permissions?.query?.({ name: "geolocation" });
+            if (perm?.state === "denied") {
+                console.debug("Geolocation previously denied by user");
+                return;
+            }
+        } catch {}
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const { latitude, longitude, accuracy } = pos.coords || {};
+                if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                    setMyLoc({ lat: latitude, lng: longitude, acc: accuracy });
+                }
+            },
+            (err) => {
+                console.debug("Geolocation error:", err?.message || err);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+        );
+    }, []);
+
+    /** If permission already granted, silently fetch coords on open */
+    useEffect(() => {
+        if (!mapOpen || myLoc || !navigator?.permissions || !navigator?.geolocation) return;
+        navigator.permissions.query({ name: "geolocation" })
+            .then((p) => {
+                if (p.state === "granted") {
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                            const { latitude, longitude, accuracy } = pos.coords || {};
+                            if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                                setMyLoc({ lat: latitude, lng: longitude, acc: accuracy });
+                            }
+                        },
+                        () => {},
+                        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+                    );
+                }
+            })
+            .catch(() => {});
+    }, [mapOpen, myLoc]);
+
+    /** Fit all stops + render blue dot from saved coords */
+    useEffect(() => {
+        if (!mapOpen || !mapApiRef.current?.getMap) return;
+        const map = mapApiRef.current.getMap();
+        if (!map) return;
+
+        // (A) Fit bounds to all stops with padding
+        const pts = (stops || [])
+            .map(s => {
+                const lat = Number(s?.lat), lng = Number(s?.lng);
+                return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+            })
+            .filter(Boolean);
+
+        if (pts.length > 0) {
+            try {
+                const bounds = L.latLngBounds(pts);
+                map.fitBounds(bounds, { padding: [40, 40] });
+            } catch {}
+        }
+
+        // (B) Draw blue dot if we already have coords
+        if (myLoc && Number.isFinite(myLoc.lat) && Number.isFinite(myLoc.lng)) {
+            try {
+                if (myLocMarkerRef.current) map.removeLayer(myLocMarkerRef.current);
+                if (myLocAccuracyRef.current) map.removeLayer(myLocAccuracyRef.current);
+            } catch {}
+
+            const dot = L.circleMarker([myLoc.lat, myLoc.lng], {
+                radius: 7,
+                color: "#0B66FF",
+                weight: 2,
+                fillColor: "#0B66FF",
+                fillOpacity: 0.9,
+            }).addTo(map);
+
+            let ring = null;
+            if (Number.isFinite(myLoc.acc) && myLoc.acc > 0) {
+                ring = L.circle([myLoc.lat, myLoc.lng], {
+                    radius: Math.min(myLoc.acc, 120),
+                    color: "#0B66FF",
+                    weight: 1,
+                    fillColor: "#0B66FF",
+                    fillOpacity: 0.08,
+                }).addTo(map);
+            }
+
+            myLocMarkerRef.current = dot;
+            myLocAccuracyRef.current = ring;
+        }
+
+        // Cleanup on close
+        return () => {
+            try {
+                if (myLocMarkerRef.current) { map.removeLayer(myLocMarkerRef.current); myLocMarkerRef.current = null; }
+                if (myLocAccuracyRef.current) { map.removeLayer(myLocAccuracyRef.current); myLocAccuracyRef.current = null; }
+            } catch {}
+        };
+    }, [mapOpen, stops, myLoc]);
+
+    // Manual locate button inside the map sheet (optional convenience)
+    const locateMe = useCallback(() => {
+        const map = mapApiRef.current?.getMap?.();
+        if (!map || !navigator?.geolocation) return;
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const { latitude, longitude } = pos.coords || {};
+                if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                    map.flyTo([latitude, longitude], Math.max(map.getZoom() || 12, 15), { animate: true });
+                }
+            },
+            () => {},
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+        );
+    }, []);
+
     if (loading || !driver) {
         return <div className="muted" style={{ padding: 16 }}>Loading route…</div>;
     }
 
     return (
         <div className="container theme" style={{ ["--brand"]: driver.color || "#3665F3" }}>
-            {/* Sticky mobile header */}
+            {/* Sticky mobile header — restored */}
             <header className="sticky-header">
                 <button className="icon-back" onClick={() => router.push("/drivers")} aria-label="Back to routes">
                     <ArrowLeft />
@@ -218,7 +376,18 @@ export default function DriverDetailPage() {
                 <SearchStops allStops={allStops} drivers={[driver]} themeColor={driver.color || "#3665F3"} />
             </div>
 
-            {/* Stops */}
+            {/* View Map button — requests geolocation on click, then opens sheet */}
+            <div style={{ textAlign: "center", marginBottom: 12 }}>
+                <button
+                    className="btn btn-primary"
+                    onClick={() => { requestGeolocationOnce(); setMapOpen(true); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+                >
+                    <MapIcon className="i16" /> View Map
+                </button>
+            </div>
+
+            {/* Stops list */}
             <section className="grid">
                 {stops.map((s, idx) => {
                     const done = !!s.completed;
@@ -254,28 +423,13 @@ export default function DriverDetailPage() {
 
                                         <div className="kv">
                                             <div className="address-line" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <MapPin
-                                                    className="i22"
-                                                    style={{
-                                                        width: 22,
-                                                        height: 22,
-                                                        color: "var(--brand)", // driver color
-                                                        flexShrink: 0,
-                                                    }}
-                                                />
+                                                <MapPin className="i22" style={{ color: "var(--brand)", flexShrink: 0 }} />
                                                 {(() => {
                                                     const unit =
-                                                        s.apt ??
-                                                        s.unit ??
-                                                        s.apartment ??
-                                                        s.suite ??
-                                                        s.flat ??
-                                                        s.unitNumber ??
-                                                        null;
-
+                                                        s.apt ?? s.unit ?? s.apartment ?? s.suite ?? s.flat ?? s.unitNumber ?? null;
                                                     return (
                                                         <span className="addr-text" style={{ lineHeight: 1.4, fontSize: 15 }}>
-        {s.address}
+                              {s.address}
                                                             {unit && (
                                                                 <span
                                                                     style={{
@@ -285,11 +439,11 @@ export default function DriverDetailPage() {
                                                                         marginLeft: 4,
                                                                     }}
                                                                 >
-            (Unit {unit})
-          </span>
+                                  (Unit {unit})
+                                </span>
                                                             )}
                                                             , {s.city}, {s.state} {s.zip}
-      </span>
+                            </span>
                                                     );
                                                 })()}
                                             </div>
@@ -368,23 +522,16 @@ export default function DriverDetailPage() {
                                                 setCompletingId(s.id);
 
                                                 try {
-                                                    // call your existing API helper (should return { ok, stop })
                                                     const res = await setStopCompleted(s.userId, s.id, true);
-
                                                     if (res?.ok && res?.stop?.completed) {
-                                                        // ✅ server confirmed — update just this stop locally (no full refresh)
-                                                        setStops(prev =>
-                                                            prev.map(x => (x.id === s.id ? { ...x, completed: true } : x))
-                                                        );
+                                                        setStops(prev => prev.map(x => (x.id === s.id ? { ...x, completed: true } : x)));
                                                     } else {
-                                                        // ❌ server didn’t confirm — keep UI unchanged (you can toast here)
                                                         console.error("setStopCompleted failed", res);
                                                     }
                                                 } catch (err) {
                                                     console.error("setStopCompleted error", err);
-                                                    // optional: toast error
-                                                    address-line                                       } finally {
-                                                    setCompletingId(null); // button spinner off either way
+                                                } finally {
+                                                    setCompletingId(null);
                                                 }
                                             }}
                                             disabled={completeDisabled}
@@ -412,14 +559,41 @@ export default function DriverDetailPage() {
                 </button>
             </div>
 
-            {/* Bottom Sheet */}
+            {/* MAP Full-screen Sheet */}
+            {mapOpen && (
+                <div className="mapsheet">
+                    <div className="mapsheet-backdrop" onClick={() => setMapOpen(false)} />
+                    <div className="mapsheet-panel">
+                        <div className="mapsheet-header">
+                            <div className="mapsheet-title">Driver Map</div>
+                            <div className="mapsheet-actions">
+                                <button className="seg" onClick={locateMe} title="Locate me">
+                                    <Crosshair className="i16" /> Locate
+                                </button>
+                                <button className="icon-btn" onClick={() => setMapOpen(false)} aria-label="Close"><X /></button>
+                            </div>
+                        </div>
+                        <div className="mapsheet-body">
+                            <DriversMapLeaflet
+                                drivers={mapDrivers}
+                                unrouted={[]}
+                                showRouteLinesDefault
+                                onReassign={async () => {}}
+                                onExpose={(api) => { mapApiRef.current = api; }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SIGNATURE Bottom Sheet */}
             {sheetOpen && (
                 <div className="sheet">
-                    <div className="sheet-backdrop" onClick={closeSheet} />
+                    <div className="sheet-backdrop" onClick={closeSignSheet} />
                     <div className="sheet-panel">
                         <div className="sheet-header">
                             <div className="sheet-title">{sheetTitle}</div>
-                            <button className="icon-btn" onClick={closeSheet} aria-label="Close"><X /></button>
+                            <button className="icon-btn" onClick={closeSignSheet} aria-label="Close"><X /></button>
                         </div>
 
                         <iframe
@@ -432,7 +606,7 @@ export default function DriverDetailPage() {
                 </div>
             )}
 
-            <InlineMessageListener onDone={closeSheet} />
+            <InlineMessageListener onDone={closeSignSheet} />
 
             {/* Page CSS */}
             <style
@@ -495,6 +669,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .d14{font-size:14px}
 .wrap{flex-wrap:wrap}
 .i16{width:16px;height:16px}
+.i22{width:22px;height:22px;vertical-align:middle}
 .b600{font-weight:600}
 .chip{font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}
 .done-bg{ background:#ECFDF5; }
@@ -519,6 +694,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 
 .search-wrap{margin:10px 0 14px}
 
+/* SIGNATURE Bottom sheet */
 .sheet{position:fixed;inset:0;z-index:1000;display:grid}
 .sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
 .sheet-panel{position:absolute;left:0;right:0;bottom:0;height:92vh;max-height:760px;background:#fff;
@@ -528,6 +704,23 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .icon-btn{border:1px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .sheet-frame{border:0;width:100%;height:100%;border-bottom-left-radius:18px;border-bottom-right-radius:18px}
 
+/* MAP Full-screen sheet */
+.mapsheet{position:fixed;inset:0;z-index:1200;display:grid}
+.mapsheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.mapsheet-panel{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column}
+.mapsheet-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee}
+.mapsheet-title{font-weight:800}
+.mapsheet-actions{display:flex;align-items:center;gap:8px}
+.seg{padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:#fff;display:inline-flex;gap:6px;align-items:center;cursor:pointer;font-weight:600}
+.mapsheet-body{flex:1;min-height:0}
+.mapsheet-body > div{height:100%;width:100%}
+
+/* Hide desktop overlays of DriversMapLeaflet (search/legend) in the mobile sheet */
+.mapsheet-body > div > div:nth-child(1),
+.mapsheet-body > div > div:nth-child(2){
+  display:none !important;
+}
+
 .stop-card{ overflow:hidden; }
 @media (max-width: 780px){
   .row.top{ flex-direction: column; align-items: stretch; }
@@ -535,10 +728,6 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
   .btn.block{ width: 100%; }
   .card-content{ padding-right: 14px; }
   .title2{ max-width: 100%; }
-}.i22 {
-  width: 22px;
-  height: 22px;
-  vertical-align: middle;
 }
           `,
                 }}

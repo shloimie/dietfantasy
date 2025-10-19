@@ -65,8 +65,16 @@ function makePinIcon(color = "#1f77b4", selected = false) {
         <path d="M14 0C6.82 0 1 5.82 1 13c0 9.6 10.3 18.1 12.2 19.67a1 1 0 0 0 1.6 0C16.7 31.1 27 22.6 27 13 27 5.82 21.18 0 14 0z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
         <circle cx="14" cy="13" r="4.5" fill="white"/>
       </svg>
-      <div style="position:absolute; left:${ANCHOR_X - 8}px; bottom:0px; transform:translateY(4px); width:16px; height:6px; border-radius:50%; background:rgba(0,0,0,0.25); filter: blur(1px);"></div>
-    </div>
+     <div style="
+        position:absolute;
+        left:${ANCHOR_X - 8}px;
+        bottom:0;
+        transform: translate3d(0,4px,0);
+        width:16px; height:6px;
+        border-radius:50%;
+        background:rgba(0,0,0,0.25);
+        opacity:.8;
+      "></div> </div>
   `;
 
     const icon = L.divIcon({
@@ -347,7 +355,15 @@ export default function DriversMapLeaflet({
 
     /* ------- search ------- */
     const [q, setQ] = useState("");
+    const searchInputRef = useRef(null);
     const [results, setResults] = useState([]);
+
+    const clearSearch = useCallback(() => {
+        setQ("");
+        // keep focus in the box for fast workflows
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+    }, []);
+
     useEffect(() => {
         const needle = q.trim().toLowerCase();
         if (!needle) { setResults([]); return; }
@@ -363,7 +379,7 @@ export default function DriversMapLeaflet({
         setResults(rows.slice(0, 50));
     }, [q, localDrivers, unroutedFiltered]);
 
-    const focusResult = useCallback((row) => {
+    const focusResult = useCallback((row, { clear = false } = {}) => {
         if (!row) return;
         const map = mapRef.current;
         const ll = getLL(row);
@@ -372,7 +388,9 @@ export default function DriversMapLeaflet({
 
         const { stop, color } = findStopByIdLocal(row.id, localDriversRef.current, localUnroutedRef.current);
         openAssignForStop(stop || row, color || row.__color || "#1f77b4");
-    }, [openAssignForStop]);
+
+        if (clear) clearSearch();
+    }, [openAssignForStop, clearSearch]);
 
     /* ------- selection helpers ------- */
     const toggleId = useCallback((id, forceOn = null) => {
@@ -653,7 +671,7 @@ export default function DriversMapLeaflet({
 
     /* ======== UI overlays ======== */
 
-    // Left: Search
+    // Left: Search (with clear "X" and auto-clear after selecting a result)
     const searchOverlay = (
         <div
             style={{ position: "absolute", zIndex: 1000, left: 10, top: 10, width: 360, pointerEvents: "auto" }}
@@ -662,13 +680,57 @@ export default function DriversMapLeaflet({
             onClick={(e) => e.stopPropagation()}
         >
             <div style={{ background: "rgba(255,255,255,0.97)", border: "1px solid #ddd", borderRadius: 12, padding: 10, boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}>
-                <input
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search name, address, phone… (Enter opens first)"
-                    onKeyDown={(e) => { if (e.key === "Enter" && results.length) focusResult(results[0]); }}
-                    style={{ width: "100%", height: 36, borderRadius: 8, border: "1px solid #ccc", padding: "0 10px", outline: "none" }}
-                />
+                <div style={{ position: "relative" }}>
+                    <input
+                        ref={searchInputRef}
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                        placeholder="Search name, address, phone… (Enter selects first)"
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" && results.length) {
+                                // focus first result and auto-clear search
+                                focusResult(results[0], { clear: true });
+                            }
+                        }}
+                        style={{
+                            width: "100%",
+                            height: 36,
+                            borderRadius: 8,
+                            border: "1px solid #ccc",
+                            padding: "0 34px 0 10px", // right padding for the clear button
+                            outline: "none"
+                        }}
+                    />
+                    {q.trim() && (
+                        <button
+                            type="button"
+                            aria-label="Clear search"
+                            onClick={clearSearch}
+                            style={{
+                                position: "absolute",
+                                right: 6,
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                width: 24,
+                                height: 24,
+                                borderRadius: 12,
+                                border: "1px solid #ddd",
+                                background: "#f8f8f8",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 14,
+                                lineHeight: 1,
+                                userSelect: "none"
+                            }}
+                            title="Clear"
+                        >
+                            ×
+                        </button>
+                    )}
+                </div>
+
                 {q.trim() && (
                     <div style={{ marginTop: 8, borderTop: "1px solid #eee", maxHeight: 260, overflowY: "auto", borderRadius: 8 }}>
                         {results.length === 0 ? (
@@ -683,7 +745,10 @@ export default function DriversMapLeaflet({
                                     <button
                                         key={id}
                                         type="button"
-                                        onClick={() => focusResult(r)}
+                                        onClick={() => {
+                                            // move to user and auto-clear the search bar
+                                            focusResult(r, { clear: true });
+                                        }}
                                         style={{ width: "100%", textAlign: "left", padding: "8px 10px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 6, cursor: ll ? "pointer" : "not-allowed", opacity: ll ? 1 : 0.6 }}
                                         title={r.__driverId ? `Driver: ${r.__driverName}` : "Unrouted"}
                                     >
@@ -864,9 +929,23 @@ export default function DriversMapLeaflet({
             </div>
         </div>
     );
+    /* ======== Expose API (optional) ======== */
+    useEffect(() => {
+        if (!onExpose) return;
+        const api = {
+            getMap: () => mapRef.current,
+            flyTo: (lat, lng, zoom = 15) => mapRef.current?.flyTo([lat, lng], zoom, { animate: true }),
+            applyBulkAssign,
+            clearSelection,
+            getSelectedCount: () => selectedIds.size,
+        };
+        onExpose(api);
+    }, []); // run once
+
 
     /* ------- Render ------- */
     return (
+
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
             {searchOverlay}
             {rightPanel}
