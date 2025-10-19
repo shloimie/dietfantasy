@@ -1,13 +1,7 @@
 // components/DriversMapLeaflet.jsx
 "use client";
 
-import React, {
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    useCallback,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
     MapContainer,
     TileLayer,
@@ -19,6 +13,23 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+
+/* ==================== Config / constants ==================== */
+
+// Selection colors
+const SELECTION_PIN_COLOR  = "#ebf707";               // your yellow
+const SELECTION_RING_COLOR = "rgba(235,247,7,0.55)";  // halo/glow
+
+// Icon geometry for the custom SVG below
+const PIN_W = 28;
+const PIN_H = 42;
+
+// Anchor at the visual tip of the pin.
+const ANCHOR_X = 14;  // bottom center X (px)
+const ANCHOR_Y = 42;  // bottom tip Y (px)
+
+// Selection hit tolerance for box selection (pixels)
+const HIT_RADIUS_PX = 16;
 
 /* ==================== Utils ==================== */
 const DEBUG = false;
@@ -37,42 +48,45 @@ const asLeafletMarker = (maybe) => {
     return null;
 };
 
-/* ---- Icons ---- */
+/* ==================== Icons (anchor-fixed) ==================== */
 const iconCache = new Map();
 const iconKey = (color, selected) => `${color}|${selected ? "sel" : "norm"}`;
+
 function makePinIcon(color = "#1f77b4", selected = false) {
     const k = iconKey(color, selected);
     const cached = iconCache.get(k);
     if (cached) return cached;
 
-    const fill = selected ? "#ebf707" : color;
+    const fill = selected ? SELECTION_PIN_COLOR : color;
     const stroke = selected ? "rgba(0,0,0,0.8)" : "rgba(0,0,0,0.4)";
     const ring = selected
-        ? `<circle cx="14" cy="13" r="8" fill="none" stroke="rgba(255,107,0,0.6)" stroke-width="3"></circle>`
+        ? `<circle cx="${ANCHOR_X}" cy="${ANCHOR_Y - 29}" r="8" fill="none" stroke="${SELECTION_RING_COLOR}" stroke-width="3"></circle>`
         : "";
 
+    // No inner CSS translate; iconAnchor handles placement
     const html = `
-    <div style="position:relative; width:28px; height:42px; transform: translate(-50%, -100%);">
-      <svg width="28" height="42" viewBox="0 0 28 42" xmlns="http://www.w3.org/2000/svg" style="display:block">
+    <div style="position:relative; width:${PIN_W}px; height:${PIN_H}px;">
+      <svg width="${PIN_W}" height="${PIN_H}" viewBox="0 0 ${PIN_W} ${PIN_H}" xmlns="http://www.w3.org/2000/svg" style="display:block">
         ${ring}
         <path d="M14 0C6.82 0 1 5.82 1 13c0 9.6 10.3 18.1 12.2 19.67a1 1 0 0 0 1.6 0C16.7 31.1 27 22.6 27 13 27 5.82 21.18 0 14 0z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
         <circle cx="14" cy="13" r="4.5" fill="white"/>
       </svg>
-      <div style="position:absolute; left:50%; bottom:-4px; transform:translateX(-50%); width:16px; height:6px; border-radius:50%; background:rgba(0,0,0,0.25); filter: blur(1px);"></div>
+      <div style="position:absolute; left:${ANCHOR_X - 8}px; bottom:0px; transform:translateY(4px); width:16px; height:6px; border-radius:50%; background:rgba(0,0,0,0.25); filter: blur(1px);"></div>
     </div>
   `;
+
     const icon = L.divIcon({
         html,
         className: "pin-icon",
-        iconSize: [28, 42],
-        iconAnchor: [14, 40],
+        iconSize: [PIN_W, PIN_H],
+        iconAnchor: [ANCHOR_X, ANCHOR_Y], // tip of the pin
         popupAnchor: [0, -36],
     });
     iconCache.set(k, icon);
     return icon;
 }
 
-/* ---- Data helpers ---- */
+/* ==================== Data helpers ==================== */
 function findStopByIdLocal(id, drivers, unrouted) {
     const key = sid(id);
     for (const d of drivers) for (const s of d.stops || []) {
@@ -82,7 +96,7 @@ function findStopByIdLocal(id, drivers, unrouted) {
     return { stop: null, color: "#666", fromDriverId: null };
 }
 
-/* ---- View persistence ---- */
+/* ==================== View persistence ==================== */
 const VIEW_KEY = "driversMap:view";
 function saveView(map) {
     try {
@@ -100,18 +114,19 @@ function loadView() {
     return null;
 }
 
-/* ---- Map bridge ---- */
+/* ==================== Map bridge ==================== */
 function MapBridge({ onReady }) {
     const map = useMap();
     useEffect(() => { if (map) onReady?.(map); }, [map, onReady]);
     return null;
 }
 
-/* ---- Programmatic popup ---- */
+/* ==================== Programmatic popup ==================== */
 function openAssignPopup({ map, stop, color, drivers, onAssign }) {
     if (!map || !stop) return;
     const ll = getLL(stop);
     if (!ll) return;
+
     const container = document.createElement("div");
     container.style.minWidth = "240px";
     container.style.border = `3px solid ${color}`;
@@ -141,13 +156,14 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
         const to = Number(sel.value);
         if (Number.isFinite(to)) onAssign?.(stop, to);
     });
+
     L.popup({ closeOnClick: true, autoClose: true, className: "color-popup" })
         .setLatLng(ll)
         .setContent(container)
         .openOn(map);
 }
 
-/* ---- Nice checkbox row ---- */
+/* ==================== Pretty checkbox rows ==================== */
 function CheckRow({ id, checked, onChange, label, title }) {
     const selected = !!checked;
     return (
@@ -200,14 +216,13 @@ export default function DriversMapLeaflet({
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
     const [didFitOnce, setDidFitOnce] = useState(false);
-    const pendingOpenIdRef = useRef(null);
 
     const onReassignRef = useRef(onReassign);
     const onReassignBulkRef = useRef(onReassignBulk);
     useEffect(() => { onReassignRef.current = onReassign; }, [onReassign]);
     useEffect(() => { onReassignBulkRef.current = onReassignBulk; }, [onReassignBulk]);
 
-    /* ------- Local copies for immediate UI ------- */
+    // Local copies for instant UI without parent refresh
     const [localDrivers, setLocalDrivers] = useState(drivers || []);
     const [localUnrouted, setLocalUnrouted] = useState(unrouted || []);
     const localDriversRef = useRef(localDrivers);
@@ -215,26 +230,30 @@ export default function DriversMapLeaflet({
     useEffect(() => { localDriversRef.current = localDrivers; }, [localDrivers]);
     useEffect(() => { localUnroutedRef.current = localUnrouted; }, [localUnrouted]);
 
-    const didInitLocalRef = useRef(false);
     useEffect(() => {
-        if (!didInitLocalRef.current) {
-            didInitLocalRef.current = true;
-            setLocalDrivers(drivers || []);
-            setLocalUnrouted(unrouted || []);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        setLocalDrivers(Array.isArray(drivers) ? drivers : []);
+    }, [drivers]);
 
-    /* ------- Toggles / selection ------- */
+    useEffect(() => {
+        setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []);
+    }, [unrouted]);
+
+    /* ------- state: toggles / selection / halo ------- */
     const [showRouteLines, setShowRouteLines] = useState(false);
-    const [selectMode, setSelectMode] = useState(false);       // box select (Shift+drag)
-    const [clickPickMode, setClickPickMode] = useState(false); // click toggles selection
+    const [selectMode, setSelectMode] = useState(false);
+    const [clickPickMode, setClickPickMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [hoverIds, setHoverIds] = useState(() => new Set());
     const [bulkBusy, setBulkBusy] = useState(false);
     const selectedCount = selectedIds.size;
 
-    /* ------- Derived ------- */
+    const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
+    const clearHalo = useCallback(() => {
+        setSelectedHalo({ lat: null, lng: null, color: "#666" });
+    }, []);
+
+    /* ------- derived ------- */
+    const hasLL = (s) => !!getLL(s);
     const allPoints = useMemo(() => {
         const pts = [];
         for (const d of localDrivers) for (const s of d.stops || []) { const ll = getLL(s); if (ll) pts.push(ll); }
@@ -255,7 +274,7 @@ export default function DriversMapLeaflet({
 
     const indexItems = useMemo(
         () => localDrivers.map((d) => ({
-            driverId: d.driverId, name: d.name, color: d.color, count: (d.stops || []).length,
+            driverId: d.driverId, name: d.name, color: d.color, count: (d.stops || []).filter(hasLL).length, // visible only
         })),
         [localDrivers]
     );
@@ -268,7 +287,7 @@ export default function DriversMapLeaflet({
         return m;
     }, [localDrivers, localUnrouted]);
 
-    /* ------- Marker refs ------- */
+    /* ------- marker refs ------- */
     const assignedMarkerRefs = useRef(new Map());
     const unroutedMarkerRefs = useRef(new Map());
     useEffect(() => {
@@ -276,12 +295,9 @@ export default function DriversMapLeaflet({
         unroutedMarkerRefs.current = new Map();
     }, [localDrivers, unroutedFiltered]);
 
-    /* ------- Search / halo ------- */
+    /* ------- search ------- */
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
-    const [selectedId, setSelectedId] = useState("");
-    const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
-
     useEffect(() => {
         const needle = q.trim().toLowerCase();
         if (!needle) { setResults([]); return; }
@@ -297,216 +313,7 @@ export default function DriversMapLeaflet({
         setResults(rows.slice(0, 30));
     }, [q, localDrivers, unroutedFiltered]);
 
-    const openById = useCallback((id) => {
-        const key = sid(id);
-        const map = mapRef.current;
-        if (!key || !map) return false;
-
-        const fromAssigned = assignedMarkerRefs.current.get(key);
-        const fromUnrouted = unroutedMarkerRefs.current.get(key);
-        const marker = fromAssigned || fromUnrouted;
-
-        const dSnap = localDriversRef.current;
-        const uSnap = localUnroutedRef.current;
-        const { stop, color } = findStopByIdLocal(key, dSnap, uSnap);
-        const ll = getLL(stop || {});
-
-        if (marker?.getLatLng) {
-            const llm = marker.getLatLng();
-            map.setView(llm, Math.max(map.getZoom(), 15), { animate: true });
-            setSelectedHalo({ lat: llm.lat, lng: llm.lng, color: fromAssigned ? (color || "#1f77b4") : "#666" });
-            openAssignPopup({ map, stop, color: fromAssigned ? (color || "#1f77b4") : "#666", drivers: dSnap, onAssign: onReassignLocal });
-            return true;
-        }
-        if (ll) {
-            map.setView(ll, Math.max(map.getZoom(), 15), { animate: true });
-            setSelectedHalo({ lat: ll[0], lng: ll[1], color });
-            openAssignPopup({ map, stop, color, drivers: dSnap, onAssign: onReassignLocal });
-            return true;
-        }
-        return false;
-    }, []);
-
-    const onSearchKeyDown = useCallback((e) => {
-        if (e.key === "Enter" && results.length > 0) {
-            e.preventDefault();
-            const k = sid(results[0].id);
-            if (k) { openById(k); setSelectedId(k); }
-        }
-    }, [results, openById]);
-
-    /* ------- Map ready / view ------- */
-    const handleMapReady = useCallback((m) => {
-        mapRef.current = m;
-        const saved = loadView();
-        if (saved) m.setView([saved.lat, saved.lng], saved.zoom, { animate: false });
-        else m.setView(initialCenter, initialZoom, { animate: false });
-        const onMoveEnd = () => saveView(m);
-        m.on("moveend", onMoveEnd);
-        m.on("zoomend", onMoveEnd);
-        setMapReady(true);
-        if (pendingOpenIdRef.current) {
-            const k = pendingOpenIdRef.current;
-            pendingOpenIdRef.current = null;
-            setTimeout(() => openById(k), 0);
-        }
-    }, [initialCenter, initialZoom, openById]);
-
-    // Fit once (no saved view)
-    useEffect(() => {
-        if (!mapReady || didFitOnce) return;
-        const saved = loadView();
-        if (saved) { setDidFitOnce(true); return; }
-        if (!allPoints.length) return;
-        try {
-            const b = L.latLngBounds(allPoints);
-            mapRef.current.fitBounds(b, { padding: [50, 50] });
-            setDidFitOnce(true);
-        } catch {}
-    }, [mapReady, didFitOnce, allPoints]);
-
-    /* ======== Box select (DOM-rect intersection) ======== */
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-        const container = map.getContainer();
-        if (!container) return;
-
-        let startClient = null;
-        let overlay = null;
-        let locked = false;
-
-        const lockMap = () => {
-            if (locked) return;
-            map.dragging.disable();
-            map.touchZoom.disable();
-            map.doubleClickZoom.disable();
-            map.scrollWheelZoom.disable();
-            map.boxZoom.disable();
-            map.keyboard.disable();
-            locked = true;
-        };
-        const unlockMap = () => {
-            if (!locked) return;
-            map.dragging.enable();
-            map.touchZoom.enable();
-            map.doubleClickZoom.enable();
-            map.scrollWheelZoom.enable();
-            map.boxZoom.enable();
-            map.keyboard.enable();
-            locked = false;
-        };
-
-        const rectFromPoints = (a, b) => ({
-            x1: Math.min(a.x, b.x),
-            y1: Math.min(a.y, b.y),
-            x2: Math.max(a.x, b.x),
-            y2: Math.max(a.y, b.y),
-        });
-        const intersects = (r1, r2, pad = 0) =>
-            !(
-                r2.x1 > r1.x2 + pad || r2.x2 < r1.x1 - pad ||
-                r2.y1 > r1.y2 + pad || r2.y2 < r1.y1 - pad
-            );
-
-        function onMouseDown(e) {
-            if (!selectMode || !e.shiftKey || e.button !== 0) return;
-            if (e.target.closest(".leaflet-control")) return;
-
-            startClient = { x: e.clientX, y: e.clientY };
-
-            const cRect = container.getBoundingClientRect();
-            overlay = document.createElement("div");
-            overlay.style.position = "absolute";
-            overlay.style.left = `${startClient.x - cRect.left}px`;
-            overlay.style.top = `${startClient.y - cRect.top}px`;
-            overlay.style.width = "0px";
-            overlay.style.height = "0px";
-            overlay.style.border = "1.5px dashed rgba(0,120,255,0.9)";
-            overlay.style.background = "rgba(0,120,255,0.12)";
-            overlay.style.pointerEvents = "none";
-            overlay.style.zIndex = 999;
-            container.appendChild(overlay);
-
-            lockMap();
-            e.preventDefault(); e.stopPropagation();
-            map.closePopup();
-        }
-
-        function onMouseMove(e) {
-            if (!startClient || !overlay) return;
-            const cRect = container.getBoundingClientRect();
-            const now = { x: e.clientX, y: e.clientY };
-            const rr = rectFromPoints(startClient, now);
-            overlay.style.left = `${rr.x1 - cRect.left}px`;
-            overlay.style.top = `${rr.y1 - cRect.top}px`;
-            overlay.style.width = `${rr.x2 - rr.x1}px`;
-            overlay.style.height = `${rr.y2 - rr.y1}px`;
-
-            const picked = new Set();
-            const visit = (mapRefMap) => {
-                mapRefMap.forEach((m, id) => {
-                    const el = m?.getElement?.();
-                    if (!el) return;
-                    const br = el.getBoundingClientRect();
-                    const mr = { x1: br.left, y1: br.top, x2: br.right, y2: br.bottom };
-                    if (intersects(rr, mr, 0)) picked.add(id);
-                });
-            };
-            visit(assignedMarkerRefs.current);
-            visit(unroutedMarkerRefs.current);
-            setHoverIds(picked);
-            e.preventDefault(); e.stopPropagation();
-        }
-
-        function onMouseUp(e) {
-            if (!startClient) return;
-
-            setHoverIds((prevHover) => {
-                setSelectedIds((prev) => {
-                    const next = new Set(prev);
-                    const subtract = e.altKey || e.metaKey || e.ctrlKey;
-                    prevHover.forEach((id) => subtract ? next.delete(id) : next.add(id));
-                    return next;
-                });
-                return new Set();
-            });
-
-            if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
-            overlay = null; startClient = null;
-            unlockMap();
-            e.preventDefault(); e.stopPropagation();
-        }
-
-        container.addEventListener("mousedown", onMouseDown, true);
-        window.addEventListener("mousemove", onMouseMove, true);
-        window.addEventListener("mouseup", onMouseUp, true);
-        return () => {
-            container.removeEventListener("mousedown", onMouseDown, true);
-            window.removeEventListener("mousemove", onMouseMove, true);
-            window.removeEventListener("mouseup", onMouseUp, true);
-            unlockMap();
-        };
-    }, [selectMode]);
-
-    /* ======== Live coloring ======== */
-    const prevLiveSetRef = useRef(new Set());
-    const setIconForId = useCallback((id, on) => {
-        const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
-        if (!m) return;
-        const base = idBaseColor.get(id) || "#666";
-        m.setIcon(makePinIcon(base, !!on));
-    }, [idBaseColor]);
-
-    useEffect(() => {
-        const live = new Set([...selectedIds, ...hoverIds]);
-        const prev = prevLiveSetRef.current;
-        live.forEach((id) => { if (!prev.has(id)) setIconForId(id, true); });
-        prev.forEach((id) => { if (!live.has(id)) setIconForId(id, false); });
-        prevLiveSetRef.current = live;
-    }, [selectedIds, hoverIds, setIconForId]);
-
-    /* ------- Local moves ------- */
+    /* ------- local data updates ------- */
     const moveStopsLocally = useCallback((stopIds, toDriverId) => {
         const idKeys = new Set(stopIds.map(sid));
         const dSnap = localDriversRef.current;
@@ -546,6 +353,240 @@ export default function DriversMapLeaflet({
         [moveStopsLocally]
     );
 
+    /* ------- popup open on normal click ------- */
+    const openAssignForStop = useCallback((stop, baseColor) => {
+        const map = mapRef.current;
+        if (!map) return;
+        openAssignPopup({
+            map,
+            stop,
+            color: baseColor || "#1f77b4",
+            drivers: localDriversRef.current,
+            onAssign: onReassignLocal,
+        });
+        const ll = getLL(stop);
+        if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
+    }, [onReassignLocal]);
+
+    const toggleId = useCallback((id, forceOn = null) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (forceOn === true) next.add(id);
+            else if (forceOn === false) next.delete(id);
+            else { next.has(id) ? next.delete(id) : next.add(id); }
+            return next;
+        });
+    }, []);
+
+    const handleMarkerClick = useCallback((id, stop, baseColor, e) => {
+        const map = mapRef.current;
+        const ev = e?.originalEvent;
+        const modifier = ev?.altKey || ev?.metaKey || ev?.ctrlKey;
+        const isToggle = clickPickMode || modifier;
+
+        if (isToggle) {
+            toggleId(id);
+            map?.closePopup();
+            ev?.preventDefault?.();
+            ev?.stopPropagation?.();
+            return;
+        }
+        map?.closePopup();
+        openAssignForStop(stop, baseColor);
+    }, [clickPickMode, openAssignForStop, toggleId]);
+
+    /* ------- Map ready / view + halo clearing hooks ------- */
+    const handleMapReady = useCallback((m) => {
+        mapRef.current = m;
+        const saved = loadView();
+        if (saved) m.setView([saved.lat, saved.lng], saved.zoom, { animate: false });
+        else m.setView(initialCenter, initialZoom, { animate: false });
+
+        const onMoveEnd = () => saveView(m);
+        m.on("moveend", onMoveEnd);
+        m.on("zoomend", onMoveEnd);
+
+        // Clear halo when clicking empty map or closing any popup
+        m.on("click", clearHalo);
+        m.on("popupclose", clearHalo);
+
+        setMapReady(true);
+    }, [initialCenter, initialZoom, clearHalo]);
+
+    // Fit once (no saved view)
+    useEffect(() => {
+        if (!mapReady || didFitOnce) return;
+        const saved = loadView();
+        if (saved) { setDidFitOnce(true); return; }
+        if (!allPoints.length) return;
+        try {
+            const b = L.latLngBounds(allPoints);
+            mapRef.current.fitBounds(b, { padding: [50, 50] });
+            setDidFitOnce(true);
+        } catch {}
+    }, [mapReady, didFitOnce, allPoints]);
+
+    /* ======== Box select in container pixel space (accurate) ======== */
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+        const container = map.getContainer();
+        if (!container) return;
+
+        let startClient = null;
+        let overlay = null;
+        let locked = false;
+
+        const lockMap = () => {
+            if (locked) return;
+            map.dragging.disable();
+            map.touchZoom.disable();
+            map.doubleClickZoom.disable();
+            map.scrollWheelZoom.disable();
+            map.boxZoom.disable();
+            map.keyboard.disable();
+            locked = true;
+        };
+        const unlockMap = () => {
+            if (!locked) return;
+            map.dragging.enable();
+            map.touchZoom.enable();
+            map.doubleClickZoom.enable();
+            map.scrollWheelZoom.enable();
+            map.boxZoom.enable();
+            map.keyboard.enable();
+            locked = false;
+        };
+
+        const toContainerXY = (clientX, clientY) => {
+            const r = container.getBoundingClientRect();
+            return { x: clientX - r.left, y: clientY - r.top };
+        };
+
+        const normalizeRect = (a, b) => ({
+            x1: Math.min(a.x, b.x),
+            y1: Math.min(a.y, b.y),
+            x2: Math.max(a.x, b.x),
+            y2: Math.max(a.y, b.y),
+        });
+
+        const pointInRect = (p, r, pad = 0) =>
+            p.x >= r.x1 - pad && p.x <= r.x2 + pad &&
+            p.y >= r.y1 - pad && p.y <= r.y2 + pad;
+
+        function onMouseDown(e) {
+            if (!selectMode || !e.shiftKey || e.button !== 0) return;
+            if (e.target.closest(".leaflet-control")) return;
+
+            startClient = { x: e.clientX, y: e.clientY };
+
+            const cRect = container.getBoundingClientRect();
+            overlay = document.createElement("div");
+            overlay.style.position = "absolute";
+            overlay.style.left = `${startClient.x - cRect.left}px`;
+            overlay.style.top  = `${startClient.y - cRect.top}px`;
+            overlay.style.width = "0px";
+            overlay.style.height = "0px";
+            overlay.style.border = "1.5px dashed rgba(0,120,255,0.9)";
+            overlay.style.background = "rgba(0,120,255,0.12)";
+            overlay.style.pointerEvents = "none";
+            overlay.style.zIndex = 999;
+            container.appendChild(overlay);
+
+            lockMap();
+            clearHalo();        // <<< hide halo as soon as you start a drag-select
+            map.closePopup();
+            e.preventDefault(); e.stopPropagation();
+        }
+
+        function onMouseMove(e) {
+            if (!startClient || !overlay) return;
+
+            // visual box (client coords)
+            const cRect = container.getBoundingClientRect();
+            const nowClient = { x: e.clientX, y: e.clientY };
+            const rrClient = {
+                x1: Math.min(startClient.x, nowClient.x),
+                y1: Math.min(startClient.y, nowClient.y),
+                x2: Math.max(startClient.x, nowClient.x),
+                y2: Math.max(startClient.y, nowClient.y),
+            };
+            overlay.style.left   = `${rrClient.x1 - cRect.left}px`;
+            overlay.style.top    = `${rrClient.y1 - cRect.top}px`;
+            overlay.style.width  = `${rrClient.x2 - rrClient.x1}px`;
+            overlay.style.height = `${rrClient.y2 - rrClient.y1}px`;
+
+            // compute rect in container pixels
+            const a = toContainerXY(startClient.x, startClient.y);
+            const b = toContainerXY(nowClient.x, nowClient.y);
+            const rect = normalizeRect(a, b);
+
+            const pad = HIT_RADIUS_PX;
+            const picked = new Set();
+
+            const visit = (refMap) => {
+                refMap.forEach((m, id) => {
+                    const ll = m?.getLatLng?.();
+                    if (!ll) return;
+                    const pt = map.latLngToContainerPoint(ll);
+                    if (pointInRect(pt, rect, pad)) picked.add(id);
+                });
+            };
+
+            visit(assignedMarkerRefs.current);
+            visit(unroutedMarkerRefs.current);
+
+            setHoverIds(picked);
+            e.preventDefault(); e.stopPropagation();
+        }
+
+        function onMouseUp(e) {
+            if (!startClient) return;
+
+            setHoverIds((prevHover) => {
+                setSelectedIds((prev) => {
+                    const next = new Set(prev);
+                    const subtract = e.altKey || e.metaKey || e.ctrlKey;
+                    prevHover.forEach((id) => (subtract ? next.delete(id) : next.add(id)));
+                    return next;
+                });
+                return new Set();
+            });
+
+            if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+            overlay = null; startClient = null;
+            unlockMap();
+            e.preventDefault(); e.stopPropagation();
+        }
+
+        container.addEventListener("mousedown", onMouseDown, true);
+        window.addEventListener("mousemove", onMouseMove, true);
+        window.addEventListener("mouseup", onMouseUp, true);
+        return () => {
+            container.removeEventListener("mousedown", onMouseDown, true);
+            window.removeEventListener("mousemove", onMouseMove, true);
+            window.removeEventListener("mouseup", onMouseUp, true);
+            unlockMap();
+        };
+    }, [selectMode, clearHalo]);
+
+    /* ======== Live coloring ======== */
+    const prevLiveSetRef = useRef(new Set());
+    const setIconForId = useCallback((id, on) => {
+        const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
+        if (!m) return;
+        const base = idBaseColor.get(id) || "#666";
+        m.setIcon(makePinIcon(base, !!on));
+    }, [idBaseColor]);
+
+    useEffect(() => {
+        const live = new Set([...selectedIds, ...hoverIds]);
+        const prev = prevLiveSetRef.current;
+        live.forEach((id) => { if (!prev.has(id)) setIconForId(id, true); });
+        prev.forEach((id) => { if (!live.has(id)) setIconForId(id, false); });
+        prevLiveSetRef.current = live;
+    }, [selectedIds, hoverIds, setIconForId]);
+
     /* ------- Bulk assign ------- */
     const [bulkDriverId, setBulkDriverId] = useState("");
     const applyBulkAssign = useCallback(async () => {
@@ -572,8 +613,9 @@ export default function DriversMapLeaflet({
             setBulkBusy(false);
             prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
             prevLiveSetRef.current = new Set();
+            clearHalo(); // also drop any remaining halo after a batch
         }
-    }, [bulkDriverId, selectedIds, bulkBusy, moveStopsLocally, setIconForId]);
+    }, [bulkDriverId, selectedIds, bulkBusy, moveStopsLocally, setIconForId, clearHalo]);
 
     const clearSelection = useCallback(() => {
         prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
@@ -581,48 +623,10 @@ export default function DriversMapLeaflet({
         setSelectedIds(new Set());
         setHoverIds(new Set());
         setBulkDriverId("");
-    }, [setIconForId]);
+        clearHalo(); // <<< ensure halo is gone on full reset
+    }, [setIconForId, clearHalo]);
 
-    /* ------- Toggle helpers & click behavior ------- */
-    const toggleId = useCallback((id, forceOn = null) => {
-        setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (forceOn === true) next.add(id);
-            else if (forceOn === false) next.delete(id);
-            else { next.has(id) ? next.delete(id) : next.add(id); }
-            return next;
-        });
-    }, []);
-
-    const handleMarkerClick = useCallback((id, stop, baseColor, e) => {
-        const map = mapRef.current;
-        const ev = e?.originalEvent;
-        const modifier = ev?.altKey || ev?.metaKey || ev?.ctrlKey;
-        const isToggle = clickPickMode || modifier;
-
-        if (isToggle) {
-            toggleId(id);
-            map?.closePopup();
-            ev?.preventDefault?.();
-            ev?.stopPropagation?.();
-            return;
-        }
-
-        // Normal click -> open popup programmatically
-        map?.closePopup();
-        openAssignPopup({
-            map,
-            stop,
-            color: baseColor || "#1f77b4",
-            drivers: localDriversRef.current,
-            onAssign: onReassignLocal,
-        });
-
-        const ll = getLL(stop);
-        if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
-    }, [clickPickMode, toggleId, onReassignLocal]);
-
-    /* ------- Overlay UI ------- */
+    /* ------- Overlay (toolbar + toggles) ------- */
     const overlay = (
         <div
             style={{
@@ -710,9 +714,9 @@ export default function DriversMapLeaflet({
                         </button>
                     </div>
                     <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
-                        Box: hold <b>Shift</b> and drag (add); hold <b>Alt/Option/Ctrl/Cmd</b> to subtract.
+                        Box: hold <b>Shift</b> and drag (add). Hold <b>Alt/Option/Ctrl/Cmd</b> when releasing to subtract.
                         <br />
-                        Click: enable <b>Click to select</b>, or hold <b>Alt/Option/Ctrl/Cmd</b> while clicking.
+                        Click: enable <b>Click to select</b>, or hold <b>Alt/Option/Ctrl/Cmd</b> while clicking a dot.
                     </div>
                 </div>
             )}
@@ -753,7 +757,7 @@ export default function DriversMapLeaflet({
                 }}
             >
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                    Drivers ({totalAssigned} assigned)
+                    Drivers ({totalAssigned} visible)
                 </div>
 
                 <CheckRow
@@ -779,7 +783,7 @@ export default function DriversMapLeaflet({
                 />
 
                 <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-                    Unrouted: {unroutedFiltered.length}
+                    Unrouted (visible): {unroutedFiltered.filter(hasLL).length}
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -811,8 +815,18 @@ export default function DriversMapLeaflet({
                 <input
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
-                    onKeyDown={onSearchKeyDown}
                     placeholder="Search name, address, phone… (Enter opens first)"
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter" && results.length) {
+                            const k = sid(results[0].id);
+                            if (k) {
+                                const dSnap = localDriversRef.current;
+                                const uSnap = localUnroutedRef.current;
+                                const { stop, color } = findStopByIdLocal(k, dSnap, uSnap);
+                                openAssignForStop(stop, color);
+                            }
+                        }
+                    }}
                     style={{ width: "100%", height: 36, borderRadius: 8, border: "1px solid #ccc", padding: "0 10px", outline: "none" }}
                 />
             </div>
@@ -838,7 +852,7 @@ export default function DriversMapLeaflet({
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
                     <ZoomControl position="bottomleft" />
 
-                    {/* single-clicked/located halo */}
+                    {/* clicked/located halo (clears properly now) */}
                     {Number.isFinite(selectedHalo.lat) && Number.isFinite(selectedHalo.lng) && (
                         <CircleMarker
                             center={[selectedHalo.lat, selectedHalo.lng]}
@@ -864,7 +878,7 @@ export default function DriversMapLeaflet({
                         })
                     }
 
-                    {/* UNROUTED markers (no <Popup> bound) */}
+                    {/* UNROUTED markers */}
                     {unroutedFiltered.map((s) => {
                         const ll = getLL(s); if (!ll) return null;
                         const id = sid(s.id);
@@ -884,7 +898,7 @@ export default function DriversMapLeaflet({
                         );
                     })}
 
-                    {/* ASSIGNED markers (no <Popup> bound) */}
+                    {/* ASSIGNED markers */}
                     {localDrivers.map((d) =>
                         (d.stops || []).map((s) => {
                             const ll = getLL(s); if (!ll) return null;
