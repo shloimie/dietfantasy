@@ -245,28 +245,36 @@ export default function DriversDialog({
 
     // Map-facing drivers (kept in sync with dialog routes)
     const mapDrivers = React.useMemo(() => {
-        return routes.map((r, i) => {
+        return (routes || []).map((r, i) => {
+            // make sure we always have a numeric, unique driverId
+            const driverId = Number(r.driverId ?? r.id);
             const color = r.color || palette[i % palette.length];
-            const dname = r.driverName || `Driver ${i + 1}`;
-            const driverId = r.driverId;
-            const stops = (r.stops || []).map((u, idx) => ({
-                id: u.id,
-                userId: u.userId ?? u.id,
-                name: nameOf(u),
-                address: `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
-                phone: u.phone ?? "",
-                city: u.city ?? "",
-                state: u.state ?? "",
-                zip: u.zip ?? "",
-                lat: Number(u.lat),
-                lng: Number(u.lng),
-                __driverId: driverId,
-                __driverName: dname,
-                __stopIndex: idx,
-            })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+            const dname = r.driverName || r.name || `Driver ${i + 1}`;
+
+            const stops = (r.stops || [])
+                .map((u, idx) => ({
+                    id: u.id,
+                    userId: u.userId ?? u.id,
+                    name: nameOf(u),
+                    address: `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
+                    phone: u.phone ?? "",
+                    city: u.city ?? "",
+                    state: u.state ?? "",
+                    zip: u.zip ?? "",
+                    lat: Number(u.lat),
+                    lng: Number(u.lng),
+
+                    // IMPORTANT: tag the stop with the numeric owner driver id
+                    __driverId: driverId,
+                    __driverName: dname,
+                    __stopIndex: idx,
+                }))
+                .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+
             return { id: String(driverId), driverId, name: dname, color, polygon: [], stops };
         });
     }, [routes]);
+
 
     const routeStops = React.useMemo(() => routes.map(r => (r.stops || [])), [routes]);
     const driverColors = React.useMemo(() => routes.map((r, i) => r.color || palette[i % palette.length]), [routes]);

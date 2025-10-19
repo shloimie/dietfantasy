@@ -278,38 +278,48 @@ export default function DriversMapLeaflet({
 
     /* ------- local data updates ------- */
     const moveStopsLocally = useCallback((stopIds, toDriverId) => {
+        const toId = Number(toDriverId);
         const idKeys = new Set(stopIds.map(sid));
         const dSnap = localDriversRef.current;
         const uSnap = localUnroutedRef.current;
 
+        // collect the real stop objects by id, update their owner tag (__driverId)
         const movingStops = [];
         for (const id of idKeys) {
             const { stop } = findStopByIdLocal(id, dSnap, uSnap);
-            if (stop) movingStops.push(stop);
+            if (stop) {
+                movingStops.push({ ...stop, __driverId: toId });
+            }
         }
 
+        // strip them from every driver and from unrouted
         const strippedDrivers = dSnap.map((d) => ({
             ...d,
             stops: (d.stops || []).filter((s) => !idKeys.has(sid(s.id))),
         }));
         const nextUnrouted = uSnap.filter((s) => !idKeys.has(sid(s.id)));
 
+        // add to the target driver
+        let injected = false;
         const nextDrivers = strippedDrivers.map((d) => {
-            if (Number(d.driverId) === Number(toDriverId)) {
-                const newStops = Array.isArray(d.stops)
-                    ? [...d.stops, ...movingStops.map((s) => ({ ...s }))]
-                    : movingStops.map((s) => ({ ...s }));
+            if (Number(d.driverId) === toId) {
+                injected = true;
+                const newStops = Array.isArray(d.stops) ? [...d.stops, ...movingStops] : [...movingStops];
                 return { ...d, stops: newStops };
             }
             return d;
         });
 
-        setLocalDrivers(nextDrivers);
+        // if target driver not present yet (edge case), create it to avoid "all to one"
+        const finalDrivers = injected
+            ? nextDrivers
+            : [...nextDrivers, { driverId: toId, name: `Driver ${toId}`, color: "#1f77b4", stops: movingStops, polygon: [] }];
+
+        setLocalDrivers(finalDrivers);
         setLocalUnrouted(nextUnrouted);
-        localDriversRef.current = nextDrivers;
+        localDriversRef.current = finalDrivers;
         localUnroutedRef.current = nextUnrouted;
     }, []);
-
     /* ------- popup assign (single) ------- */
     const onReassignLocal = useCallback(
         async (stop, toDriverId) => {

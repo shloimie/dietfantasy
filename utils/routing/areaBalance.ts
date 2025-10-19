@@ -187,17 +187,18 @@ function buildComponents(points: P[], radiusKm = TEN_MI_KM): Component[] {
     return comps;
 }
 
+
 function splitOutliersByComponents(points: P[]) {
     const comps = buildComponents(points, TEN_MI_KM);
-    if (comps.length <= 1) {
-        // STRICT: if single tiny component, send to D0; else keep all
-        if (comps.length === 1 && comps[0].ids.length < MIN_CLUSTER_SIZE) {
-            return { keep: [] as P[], toD0: comps[0].pts };
-        }
-        return { keep: points, toD0: [] as P[] };
+
+    if (comps.length === 0) return { keep: [] as P[], toD0: [] as P[] };
+
+    if (comps.length === 1) {
+        // Single component: keep it (even if small). Do not send to D0.
+        return { keep: comps[0].pts, toD0: [] as P[] };
     }
 
-    // min inter-component distances
+    // Compute min inter-component distances
     const compMinDist: number[] = comps.map(() => Infinity);
     for (let a = 0; a < comps.length; a++) {
         for (let b = a + 1; b < comps.length; b++) {
@@ -215,16 +216,45 @@ function splitOutliersByComponents(points: P[]) {
         }
     }
 
+    // New rule: send a component to D0 only if it’s BOTH tiny AND far-from-all
     const keep: P[] = [];
     const toD0: P[] = [];
     comps.forEach((c, idx) => {
         const tooSmall = c.ids.length < MIN_CLUSTER_SIZE;
         const farFromAll = compMinDist[idx] > TEN_MI_KM;
-        if (tooSmall || farFromAll) toD0.push(...c.pts);
+        if (tooSmall && farFromAll) toD0.push(...c.pts);
         else keep.push(...c.pts);
     });
 
-    // STRICT: do NOT relax (no re-merging outliers into keep)
+    // Safety guard: never let D0 steal (almost) everything
+    const total = points.length;
+    if (!keep.length || keep.length < Math.ceil(0.4 * total)) {
+        // Reclaim largest components from D0 until at least ~50% are kept
+        const compsBySize = comps.slice().sort((a, b) => b.ids.length - a.ids.length);
+        const targetKeep = Math.max(1, Math.ceil(0.5 * total));
+        const keepSet = new Set(keep.map((p) => p.id));
+
+        // rebuild toD0 as a set of ids for fast delete
+        const toD0Set = new Set(toD0.map((p) => p.id));
+
+        for (const c of compsBySize) {
+            const anyInKeep = c.ids.some((id) => keepSet.has(id));
+            if (!anyInKeep) {
+                // move this component from D0 to keep
+                keep.push(...c.pts);
+                c.ids.forEach((id) => toD0Set.delete(id));
+                if (keep.length >= targetKeep) break;
+            }
+        }
+
+        // rebuild toD0 array
+        const idToP = new Map(points.map((p) => [p.id, p]));
+        const nextToD0: P[] = [];
+        toD0Set.forEach((id) => { const p = idToP.get(id); if (p) nextToD0.push(p); });
+        toD0.length = 0;
+        toD0.push(...nextToD0);
+    }
+
     return { keep, toD0 };
 }
 
