@@ -1,4 +1,3 @@
-// components/UsersTable.jsx
 "use client";
 
 import React from "react";
@@ -7,7 +6,6 @@ import {
     Button,
     CircularProgress,
     IconButton,
-    Stack,
     Tooltip,
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
@@ -51,9 +49,7 @@ export default function UsersTable({
                 setSigCount(map);
             } catch {}
         })();
-        return () => {
-            cancelled = true;
-        };
+        return () => { cancelled = true; };
     }, []);
 
     // filter
@@ -63,71 +59,60 @@ export default function UsersTable({
         const src = Array.isArray(users) ? users : [];
         return src.filter((u) => {
             let hay = [
-                u.first,
-                u.last,
-                u.address,
-                u.apt,
-                u.city,
-                u.county,
-                u.zip,
-                u.state,
-                u.phone,
-                u.dislikes,
-                u.medicaid ? "yes" : "no",
+                u.first, u.last, u.address, u.apt, u.city, u.county, u.zip, u.state,
+                u.phone, u.dislikes, u.medicaid ? "yes" : "no",
             ]
                 .map((v) => (v == null ? "" : String(v)))
                 .join(" ")
                 .toLowerCase();
             if (u?.schedule) {
-                const k = [
-                    "monday",
-                    "tuesday",
-                    "wednesday",
-                    "thursday",
-                    "friday",
-                    "saturday",
-                    "sunday",
-                ];
+                const k = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
                 hay +=
                     " " +
-                    ["m", "t", "w", "th", "f", "sa", "su"]
-                        .filter((_, i) => u.schedule[k[i]])
-                        .join(" ");
+                    ["m","t","w","th","f","sa","su"].filter((_, i) => u.schedule[k[i]]).join(" ");
             }
             return hay.includes(q);
         });
     }, [users, search]);
 
-    React.useEffect(
-        () => {
-            onVisibleCountChange(filtered.length);
-        },
+    React.useEffect(() => {
+        onVisibleCountChange(filtered.length);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [filtered.length]
-    );
+    }, [filtered.length]);
+
+    // sort helpers
+    const getSigCount = (u) => Number(sigCount[u.id] ?? 0);
+    const getDate = (v) => (v ? new Date(v).getTime() : 0);
 
     // sort
     const sorted = React.useMemo(() => {
         if (!sortKey) return filtered;
+
+        // custom sorts
         if (sortKey === "signatures") {
-            const getCount = (u) => Number(sigCount[u.id] ?? 0);
             const arr = [...filtered].sort((a, b) => {
-                const ca = getCount(a),
-                    cb = getCount(b);
-                const aHas = ca > 0 ? 1 : 0,
-                    bHas = cb > 0 ? 1 : 0;
+                const ca = getSigCount(a), cb = getSigCount(b);
+                const aHas = ca > 0 ? 1 : 0, bHas = cb > 0 ? 1 : 0;
                 if (aHas !== bHas) return bHas - aHas;
                 if (ca !== cb) return cb - ca;
-                const lastCmp = String(a.last ?? "").localeCompare(String(b.last ?? ""), undefined, {
-                    sensitivity: "base",
-                });
+                const lastCmp = String(a.last ?? "").localeCompare(String(b.last ?? ""), undefined, { sensitivity: "base" });
                 if (lastCmp) return lastCmp;
-                return String(a.first ?? "").localeCompare(String(b.first ?? ""), undefined, {
-                    sensitivity: "base",
-                });
+                return String(a.first ?? "").localeCompare(String(b.first ?? ""), undefined, { sensitivity: "base" });
             });
             return sortAsc ? arr.reverse() : arr;
         }
+
+        if (sortKey === "createdAt") {
+            const arr = [...filtered].sort((a, b) => {
+                const av = getDate(a.createdAt);
+                const bv = getDate(b.createdAt);
+                // default: newest first
+                return sortAsc ? av - bv : bv - av;
+            });
+            return arr;
+        }
+
+        // default string-ish compare
         const arr = [...filtered].sort((a, b) => {
             const av = (a?.[sortKey] ?? "").toString().toLowerCase();
             const bv = (b?.[sortKey] ?? "").toString().toLowerCase();
@@ -143,7 +128,12 @@ export default function UsersTable({
         onVisibleRowsChange(sorted);
     }, [sorted, onVisibleRowsChange]);
 
-    // columns
+    // =========================
+    // Columns (with row number)
+    // =========================
+    // NEW: row index column (always first)
+    const indexCol = { key: "__rownum", label: "#", sort: [] };
+
     const baseCols = [
         { key: "name", label: "Name", sort: ["first", "last"] },
         { key: "sign", label: "SIGN", sort: ["signatures"] },
@@ -163,26 +153,33 @@ export default function UsersTable({
         { key: "medicaid", label: "Medicaid", sort: ["medicaid"] },
         { key: "schedule", label: "Schedule", sort: ["schedule"] },
         { key: "geo", label: "Geo", sort: ["geo"] },
+        { key: "createdAt", label: "Created", sort: ["createdAt"] },
     ];
-    const columns = expanded ? [...baseCols, ...detailCols] : baseCols;
-    const baseCount = baseCols.length;
+
+    // Final column list (+1 for index col)
+    const columns = expanded ? [indexCol, ...baseCols, ...detailCols] : [indexCol, ...baseCols];
+    // Where the detail shelf starts (for styling)
+    const baseCount = 1 + baseCols.length;
 
     const SortGlyph = ({ active }) =>
-        active ? (
-            sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />
-        ) : (
-            <UnfoldMoreIcon fontSize="inherit" />
-        );
+        active ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)
+            : (<UnfoldMoreIcon fontSize="inherit" />);
 
     const setSort = (k) => {
         setSortAsc((prev) => (k === sortKey ? !prev : true));
         setSortKey(k);
     };
 
-    const wrap = {
-        whiteSpace: "normal",
-        wordBreak: "normal",
-        overflowWrap: "break-word",
+    const wrap = { whiteSpace: "normal", wordBreak: "normal", overflowWrap: "break-word" };
+
+    const fmtCreated = (v) => {
+        if (!v) return "—";
+        try {
+            const d = new Date(v);
+            return d.toLocaleString();
+        } catch {
+            return String(v);
+        }
     };
 
     const SignCell = (u) => {
@@ -244,9 +241,7 @@ export default function UsersTable({
         };
 
         return (
-            <Tooltip
-                title={done ? "View completed signatures" : isCopied ? "Link Copied!" : "Copy link"}
-            >
+            <Tooltip title={done ? "View completed signatures" : isCopied ? "Link Copied!" : "Copy link"}>
                 <IconButton size="small" onClick={onClick} aria-label="Sign link" disabled={isLoading}>
                     {isLoading ? (
                         <CircularProgress size={18} color="primary" />
@@ -264,14 +259,7 @@ export default function UsersTable({
        RENDER
        ========================= */
     return (
-        // This Box is the ONLY scroll container (both axes)
-        <Box
-            sx={{
-                width: "100%",
-                height: "100%",
-                overflow: "auto", // ← gives vertical + horizontal scrollbars as needed
-            }}
-        >
+        <Box sx={{ width: "100%", height: "100%", overflow: "auto" }}>
             <Box sx={{ minWidth: "100%" }}>
                 <table
                     style={{
@@ -283,11 +271,11 @@ export default function UsersTable({
                     }}
                 >
                     <thead>
-                    {/* Sticky header inside THIS scroll container */}
                     <tr style={{ position: "sticky", top: 0, zIndex: 6 }}>
-                        {[...baseCols, ...(expanded ? detailCols : [])].map((col, i) => {
+                        {columns.map((col, i) => {
                             const isShelfStart = expanded && i === baseCount;
                             const k = col.sort?.[0];
+                            const isIndex = col.key === "__rownum";
                             return (
                                 <th
                                     key={col.key}
@@ -306,89 +294,57 @@ export default function UsersTable({
                                         verticalAlign: "bottom",
                                         boxShadow: "0 8px 14px rgba(0,0,0,0.06)",
                                         ...(isShelfStart ? { boxShadow: "inset 3px 0 0 #d8dee6" } : null),
+                                        ...(isIndex ? { width: 52, minWidth: 52, textAlign: "right" } : null),
                                     }}
                                 >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      {col.key === "actions" ? (
-                          <Tooltip title={expanded ? "Collapse details" : "Expand details"}>
-                              <IconButton
-                                  size="small"
-                                  onClick={(e) => {
-                                      e.stopPropagation();
-                                      setExpanded((v) => !v);
-                                  }}
-                              >
-                                  {expanded ? <CloseFullscreenIcon /> : <OpenInFullIcon />}
-                              </IconButton>
-                          </Tooltip>
-                      ) : (
-                          <>
-                              {col.label}
-                              {col.key === "name" && (
-                                  <>
-                                      <IconButton
-                                          size="small"
-                                          onClick={(e) => {
-                                              e.stopPropagation();
-                                              setSort("first");
-                                          }}
-                                          sx={{ p: 0.25 }}
-                                      >
-                                          {sortKey === "first" ? (
-                                              sortAsc ? (
-                                                  <ArrowUpwardIcon fontSize="inherit" />
-                                              ) : (
-                                                  <ArrowDownwardIcon fontSize="inherit" />
-                                              )
-                                          ) : (
-                                              <UnfoldMoreIcon fontSize="inherit" />
-                                          )}
-                                          <span style={{ fontSize: 11, marginLeft: 2 }}>F</span>
-                                      </IconButton>
-                                      <IconButton
-                                          size="small"
-                                          onClick={(e) => {
-                                              e.stopPropagation();
-                                              setSort("last");
-                                          }}
-                                          sx={{ p: 0.25 }}
-                                      >
-                                          {sortKey === "last" ? (
-                                              sortAsc ? (
-                                                  <ArrowUpwardIcon fontSize="inherit" />
-                                              ) : (
-                                                  <ArrowDownwardIcon fontSize="inherit" />
-                                              )
-                                          ) : (
-                                              <UnfoldMoreIcon fontSize="inherit" />
-                                          )}
-                                          <span style={{ fontSize: 11, marginLeft: 2 }}>L</span>
-                                      </IconButton>
-                                  </>
-                              )}
-                              {k && col.key !== "name" && (
-                                  <IconButton
-                                      size="small"
-                                      onClick={(e) => {
-                                          e.stopPropagation();
-                                          setSort(k);
-                                      }}
-                                      sx={{ p: 0.25 }}
-                                  >
-                                      {sortKey === k ? (
-                                          sortAsc ? (
-                                              <ArrowUpwardIcon fontSize="inherit" />
-                                          ) : (
-                                              <ArrowDownwardIcon fontSize="inherit" />
-                                          )
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                      {isIndex ? "#" : col.key === "actions" ? (
+                                          <Tooltip title={expanded ? "Collapse details" : "Expand details"}>
+                                              <IconButton
+                                                  size="small"
+                                                  onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setExpanded((v) => !v);
+                                                  }}
+                                              >
+                                                  {expanded ? <CloseFullscreenIcon /> : <OpenInFullIcon />}
+                                              </IconButton>
+                                          </Tooltip>
                                       ) : (
-                                          <UnfoldMoreIcon fontSize="inherit" />
+                                          <>
+                                              {col.label}
+                                              {col.key === "name" && (
+                                                  <>
+                                                      <IconButton
+                                                          size="small"
+                                                          onClick={(e) => { e.stopPropagation(); setSort("first"); }}
+                                                          sx={{ p: 0.25 }}
+                                                      >
+                                                          {sortKey === "first" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                                          <span style={{ fontSize: 11, marginLeft: 2 }}>F</span>
+                                                      </IconButton>
+                                                      <IconButton
+                                                          size="small"
+                                                          onClick={(e) => { e.stopPropagation(); setSort("last"); }}
+                                                          sx={{ p: 0.25 }}
+                                                      >
+                                                          {sortKey === "last" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                                          <span style={{ fontSize: 11, marginLeft: 2 }}>L</span>
+                                                      </IconButton>
+                                                  </>
+                                              )}
+                                              {k && col.key !== "name" && (
+                                                  <IconButton
+                                                      size="small"
+                                                      onClick={(e) => { e.stopPropagation(); setSort(k); }}
+                                                      sx={{ p: 0.25 }}
+                                                  >
+                                                      {sortKey === k ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                                  </IconButton>
+                                              )}
+                                          </>
                                       )}
-                                  </IconButton>
-                              )}
-                          </>
-                      )}
-                    </span>
+                                  </span>
                                 </th>
                             );
                         })}
@@ -396,9 +352,16 @@ export default function UsersTable({
                     </thead>
 
                     <tbody>
-                    {sorted.map((u) => {
+                    {sorted.map((u, idx) => {
                         const cityColor = getCityColor(u.city) || undefined;
+
                         const cells = {
+                            // NEW: visible row number (1-based)
+                            __rownum: (
+                                <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", opacity: 0.85, fontWeight: 700 }}>
+                                    {idx + 1}
+                                </div>
+                            ),
                             name: (
                                 <div style={{ ...wrap, fontWeight: 800 }}>
                                     {(u.first ?? "") + (u.last ? ` ${u.last}` : "")}
@@ -412,9 +375,7 @@ export default function UsersTable({
                                     {u.city ?? ""}
                                 </div>
                             ),
-                            dislikes: (
-                                <div style={{ ...wrap, whiteSpace: "pre-wrap" }}>{u.dislikes ?? ""}</div>
-                            ),
+                            dislikes: <div style={{ ...wrap, whiteSpace: "pre-wrap" }}>{u.dislikes ?? ""}</div>,
                             actions: (
                                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                                     <Button type="button" size="small" onClick={() => onEdit?.(u)} disabled={!onEdit}>
@@ -441,17 +402,9 @@ export default function UsersTable({
                             schedule: (
                                 <div style={wrap}>
                                     {u.schedule
-                                        ? ["M", "T", "W", "Th", "F", "Sa", "Su"]
+                                        ? ["M","T","W","Th","F","Sa","Su"]
                                             .filter((_, i) => {
-                                                const k = [
-                                                    "monday",
-                                                    "tuesday",
-                                                    "wednesday",
-                                                    "thursday",
-                                                    "friday",
-                                                    "saturday",
-                                                    "sunday",
-                                                ];
+                                                const k = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
                                                 return u.schedule[k[i]];
                                             })
                                             .join(" ")
@@ -463,12 +416,14 @@ export default function UsersTable({
                                     {(u.lat ?? u.latitude) != null && (u.lng ?? u.longitude) != null ? "✓" : "—"}
                                 </div>
                             ),
+                            createdAt: <div style={{ ...wrap, opacity: 0.8 }}>{fmtCreated(u.createdAt)}</div>,
                         };
 
                         return (
                             <tr key={u.id}>
-                                {[...baseCols, ...(expanded ? detailCols : [])].map((c, i) => {
+                                {columns.map((c, i) => {
                                     const isShelfStart = expanded && i === baseCount;
+                                    const isIndex = c.key === "__rownum";
                                     return (
                                         <td
                                             key={`${u.id}-${c.key}`}
@@ -481,8 +436,9 @@ export default function UsersTable({
                                                 border: "1px solid rgba(0,0,0,0.06)",
                                                 padding: "10px 12px",
                                                 verticalAlign: "top",
-                                                minWidth: 120,
+                                                minWidth: isIndex ? 52 : 120,
                                                 ...(isShelfStart ? { boxShadow: "inset 3px 0 0 #d8dee6" } : null),
+                                                ...(isIndex ? { textAlign: "right", fontVariantNumeric: "tabular-nums" } : null),
                                             }}
                                         >
                                             {cells[c.key]}
