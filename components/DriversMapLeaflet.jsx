@@ -16,21 +16,30 @@ import "leaflet/dist/leaflet.css";
 /* ==================== Config / constants ==================== */
 
 // Selection colors
-const SELECTION_PIN_COLOR  = "#ebf707";               // yellow
-const SELECTION_RING_COLOR = "rgba(235,247,7,0.55)";  // halo/glow
+const SELECTION_PIN_COLOR = "#ebf707"; // yellow
+const SELECTION_RING_COLOR = "rgba(235,247,7,0.55)"; // halo/glow
 
 // Icon geometry
 const PIN_W = 28;
 const PIN_H = 42;
-const ANCHOR_X = 14;  // tip X
-const ANCHOR_Y = 42;  // tip Y
+const ANCHOR_X = 14; // tip X
+const ANCHOR_Y = 42; // tip Y
 
 // Selection hit tolerance (pixels)
 const HIT_RADIUS_PX = 16;
 
 /* ==================== Utils ==================== */
-const sid = (v) => { try { return v == null ? "" : String(v); } catch { return ""; } };
-const toNum = (v) => { const n = typeof v === "string" ? parseFloat(v) : v; return Number.isFinite(n) ? n : null; };
+const sid = (v) => {
+    try {
+        return v == null ? "" : String(v);
+    } catch {
+        return "";
+    }
+};
+const toNum = (v) => {
+    const n = typeof v === "string" ? parseFloat(v) : v;
+    return Number.isFinite(n) ? n : null;
+};
 const getLL = (s) => {
     const lat = toNum(s?.lat), lng = toNum(s?.lng);
     return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
@@ -42,6 +51,12 @@ const asLeafletMarker = (maybe) => {
     if (maybe.marker?.getLatLng) return maybe.marker;
     return null;
 };
+
+/** Extract numeric order from "Driver X" (Driver 0 should be first) */
+function driverRankByName(name) {
+    const m = /driver\s+(\d+)/i.exec(String(name || ""));
+    return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+}
 
 /* ==================== Icons (anchor-fixed) ==================== */
 const iconCache = new Map();
@@ -65,7 +80,7 @@ function makePinIcon(color = "#1f77b4", selected = false) {
         <path d="M14 0C6.82 0 1 5.82 1 13c0 9.6 10.3 18.1 12.2 19.67a1 1 0 0 0 1.6 0C16.7 31.1 27 22.6 27 13 27 5.82 21.18 0 14 0z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
         <circle cx="14" cy="13" r="4.5" fill="white"/>
       </svg>
-     <div style="
+      <div style="
         position:absolute;
         left:${ANCHOR_X - 8}px;
         bottom:0;
@@ -74,7 +89,8 @@ function makePinIcon(color = "#1f77b4", selected = false) {
         border-radius:50%;
         background:rgba(0,0,0,0.25);
         opacity:.8;
-      "></div> </div>
+      "></div>
+    </div>
   `;
 
     const icon = L.divIcon({
@@ -157,7 +173,10 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
     const o0 = document.createElement("option");
     o0.value = ""; o0.textContent = "Select driver…"; o0.disabled = true; o0.selected = true;
     sel.appendChild(o0);
-    for (const d of drivers) {
+
+    // ensure popup's driver list also shows 0,1,2…
+    const sortedDrivers = [...drivers].sort((a, b) => driverRankByName(a.name) - driverRankByName(b.name));
+    for (const d of sortedDrivers) {
         const o = document.createElement("option");
         o.value = String(d.driverId); o.textContent = d.name;
         sel.appendChild(o);
@@ -205,8 +224,8 @@ function CheckRow({ id, checked, onChange, label, title }) {
 export default function DriversMapLeaflet({
                                               drivers = [],
                                               unrouted = [],
-                                              onReassign,            // (stop, driverId)
-                                              onExpose,              // optional
+                                              onReassign, // (stop, driverId)
+                                              onExpose, // optional
                                               initialCenter = [40.7128, -74.006],
                                               initialZoom = 10,
                                               showRouteLinesDefault = false,
@@ -227,6 +246,12 @@ export default function DriversMapLeaflet({
     useEffect(() => { setLocalDrivers(Array.isArray(drivers) ? drivers : []); }, [drivers]);
     useEffect(() => { setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []); }, [unrouted]);
 
+    // 🔑 Always-sorted view of drivers so 0 is first
+    const sortedDrivers = useMemo(
+        () => (localDrivers || []).slice().sort((a, b) => driverRankByName(a.name) - driverRankByName(b.name)),
+        [localDrivers]
+    );
+
     /* ------- toggles / selection / halo ------- */
     const [showRouteLines, setShowRouteLines] = useState(!!showRouteLinesDefault);
     const [selectMode, setSelectMode] = useState(false);
@@ -245,16 +270,16 @@ export default function DriversMapLeaflet({
     const hasLL = (s) => !!getLL(s);
     const allPoints = useMemo(() => {
         const pts = [];
-        for (const d of localDrivers) for (const s of d.stops || []) { const ll = getLL(s); if (ll) pts.push(ll); }
+        for (const d of sortedDrivers) for (const s of d.stops || []) { const ll = getLL(s); if (ll) pts.push(ll); }
         for (const s of localUnrouted) { const ll = getLL(s); if (ll) pts.push(ll); }
         return pts;
-    }, [localDrivers, localUnrouted]);
+    }, [sortedDrivers, localUnrouted]);
 
     const assignedIdSet = useMemo(() => {
         const set = new Set();
-        for (const d of localDrivers) for (const s of d.stops || []) set.add(sid(s.id));
+        for (const d of sortedDrivers) for (const s of d.stops || []) set.add(sid(s.id));
         return set;
-    }, [localDrivers]);
+    }, [sortedDrivers]);
 
     const unroutedFiltered = useMemo(
         () => (localUnrouted || []).filter((s) => !assignedIdSet.has(sid(s.id))),
@@ -262,19 +287,23 @@ export default function DriversMapLeaflet({
     );
 
     const indexItems = useMemo(
-        () => localDrivers.map((d) => ({
-            driverId: d.driverId, name: d.name, color: d.color, count: (d.stops || []).filter(hasLL).length,
-        })),
-        [localDrivers]
+        () =>
+            sortedDrivers.map((d) => ({
+                driverId: d.driverId,
+                name: d.name,
+                color: d.color,
+                count: (d.stops || []).filter(hasLL).length,
+            })),
+        [sortedDrivers]
     );
     const totalAssigned = useMemo(() => indexItems.reduce((s, x) => s + x.count, 0), [indexItems]);
 
     const idBaseColor = useMemo(() => {
         const m = new Map();
-        for (const d of localDrivers) for (const s of d.stops || []) m.set(sid(s.id), d.color || "#1f77b4");
+        for (const d of sortedDrivers) for (const s of d.stops || []) m.set(sid(s.id), d.color || "#1f77b4");
         for (const s of localUnrouted) m.set(sid(s.id), "#666");
         return m;
-    }, [localDrivers, localUnrouted]);
+    }, [sortedDrivers, localUnrouted]);
 
     /* ------- marker refs ------- */
     const assignedMarkerRefs = useRef(new Map());
@@ -282,7 +311,7 @@ export default function DriversMapLeaflet({
     useEffect(() => {
         assignedMarkerRefs.current = new Map();
         unroutedMarkerRefs.current = new Map();
-    }, [localDrivers, unroutedFiltered]);
+    }, [sortedDrivers, unroutedFiltered]);
 
     /* ------- local data updates ------- */
     const moveStopsLocally = useCallback((stopIds, toDriverId) => {
@@ -291,7 +320,6 @@ export default function DriversMapLeaflet({
         const dSnap = localDriversRef.current;
         const uSnap = localUnroutedRef.current;
 
-        // collect the real stop objects by id, update their owner tag (__driverId)
         const movingStops = [];
         for (const id of idKeys) {
             const { stop } = findStopByIdLocal(id, dSnap, uSnap);
@@ -300,14 +328,12 @@ export default function DriversMapLeaflet({
             }
         }
 
-        // strip them from every driver and from unrouted
         const strippedDrivers = dSnap.map((d) => ({
             ...d,
             stops: (d.stops || []).filter((s) => !idKeys.has(sid(s.id))),
         }));
         const nextUnrouted = uSnap.filter((s) => !idKeys.has(sid(s.id)));
 
-        // add to the target driver
         let injected = false;
         const nextDrivers = strippedDrivers.map((d) => {
             if (Number(d.driverId) === toId) {
@@ -318,7 +344,6 @@ export default function DriversMapLeaflet({
             return d;
         });
 
-        // if target driver not present yet (edge case), create it to avoid "all to one"
         const finalDrivers = injected
             ? nextDrivers
             : [...nextDrivers, { driverId: toId, name: `Driver ${toId}`, color: "#1f77b4", stops: movingStops, polygon: [] }];
@@ -333,25 +358,28 @@ export default function DriversMapLeaflet({
         async (stop, toDriverId) => {
             const id = stop?.id;
             if (id == null) return;
-            await onReassignRef.current?.(stop, Number(toDriverId)); // persist
-            moveStopsLocally([id], toDriverId);                      // reflect locally
+            await onReassignRef.current?.(stop, Number(toDriverId));
+            moveStopsLocally([id], toDriverId);
         },
         [moveStopsLocally]
     );
 
-    const openAssignForStop = useCallback((stop, baseColor) => {
-        const map = mapRef.current;
-        if (!map) return;
-        openAssignPopup({
-            map,
-            stop,
-            color: baseColor || "#1f77b4",
-            drivers: localDriversRef.current,
-            onAssign: onReassignLocal,
-        });
-        const ll = getLL(stop);
-        if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
-    }, [onReassignLocal]);
+    const openAssignForStop = useCallback(
+        (stop, baseColor) => {
+            const map = mapRef.current;
+            if (!map) return;
+            openAssignPopup({
+                map,
+                stop,
+                color: baseColor || "#1f77b4",
+                drivers: localDriversRef.current,
+                onAssign: onReassignLocal,
+            });
+            const ll = getLL(stop);
+            if (ll) setSelectedHalo({ lat: ll[0], lng: ll[1], color: baseColor || "#1f77b4" });
+        },
+        [onReassignLocal]
+    );
 
     /* ------- search ------- */
     const [q, setQ] = useState("");
@@ -360,7 +388,6 @@ export default function DriversMapLeaflet({
 
     const clearSearch = useCallback(() => {
         setQ("");
-        // keep focus in the box for fast workflows
         requestAnimationFrame(() => searchInputRef.current?.focus());
     }, []);
 
@@ -368,7 +395,7 @@ export default function DriversMapLeaflet({
         const needle = q.trim().toLowerCase();
         if (!needle) { setResults([]); return; }
         const rows = [];
-        for (const d of localDrivers) for (const s of d.stops || []) {
+        for (const d of sortedDrivers) for (const s of d.stops || []) {
             const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
             if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __driverName: d.name, __unrouted: false, __color: d.color });
         }
@@ -377,20 +404,23 @@ export default function DriversMapLeaflet({
             if (hay.includes(needle)) rows.push({ ...s, __driverId: null, __driverName: "Unrouted", __unrouted: true, __color: "#666" });
         }
         setResults(rows.slice(0, 50));
-    }, [q, localDrivers, unroutedFiltered]);
+    }, [q, sortedDrivers, unroutedFiltered]);
 
-    const focusResult = useCallback((row, { clear = false } = {}) => {
-        if (!row) return;
-        const map = mapRef.current;
-        const ll = getLL(row);
-        if (!map || !ll) return;
-        map.setView(ll, Math.max(map.getZoom(), 14), { animate: true });
+    const focusResult = useCallback(
+        (row, { clear = false } = {}) => {
+            if (!row) return;
+            const map = mapRef.current;
+            const ll = getLL(row);
+            if (!map || !ll) return;
+            map.setView(ll, Math.max(map.getZoom(), 14), { animate: true });
 
-        const { stop, color } = findStopByIdLocal(row.id, localDriversRef.current, localUnroutedRef.current);
-        openAssignForStop(stop || row, color || row.__color || "#1f77b4");
+            const { stop, color } = findStopByIdLocal(row.id, localDriversRef.current, localUnroutedRef.current);
+            openAssignForStop(stop || row, color || row.__color || "#1f77b4");
 
-        if (clear) clearSearch();
-    }, [openAssignForStop, clearSearch]);
+            if (clear) clearSearch();
+        },
+        [openAssignForStop, clearSearch]
+    );
 
     /* ------- selection helpers ------- */
     const toggleId = useCallback((id, forceOn = null) => {
@@ -403,41 +433,46 @@ export default function DriversMapLeaflet({
         });
     }, []);
 
-    const handleMarkerClick = useCallback((id, stop, baseColor, e) => {
-        const map = mapRef.current;
-        const ev = e?.originalEvent;
-        const modifier = ev?.altKey || ev?.metaKey || ev?.ctrlKey;
-        const isToggle = clickPickMode || modifier;
+    const handleMarkerClick = useCallback(
+        (id, stop, baseColor, e) => {
+            const map = mapRef.current;
+            const ev = e?.originalEvent;
+            const modifier = ev?.altKey || ev?.metaKey || ev?.ctrlKey;
+            const isToggle = clickPickMode || modifier;
 
-        if (isToggle) {
-            toggleId(id);
+            if (isToggle) {
+                toggleId(id);
+                map?.closePopup();
+                ev?.preventDefault?.();
+                ev?.stopPropagation?.();
+                return;
+            }
             map?.closePopup();
-            ev?.preventDefault?.();
-            ev?.stopPropagation?.();
-            return;
-        }
-        map?.closePopup();
-        openAssignForStop(stop, baseColor);
-    }, [clickPickMode, openAssignForStop, toggleId]);
+            openAssignForStop(stop, baseColor);
+        },
+        [clickPickMode, openAssignForStop, toggleId]
+    );
 
     /* ------- Map ready / view ------- */
-    const handleMapReady = useCallback((m) => {
-        mapRef.current = m;
-        const saved = loadView();
-        if (saved) m.setView([saved.lat, saved.lng], saved.zoom, { animate: false });
-        else m.setView(initialCenter, initialZoom, { animate: false });
+    const handleMapReady = useCallback(
+        (m) => {
+            mapRef.current = m;
+            const saved = loadView();
+            if (saved) m.setView([saved.lat, saved.lng], saved.zoom, { animate: false });
+            else m.setView(initialCenter, initialZoom, { animate: false });
 
-        const onMoveEnd = () => saveView(m);
-        m.on("moveend", onMoveEnd);
-        m.on("zoomend", onMoveEnd);
+            const onMoveEnd = () => saveView(m);
+            m.on("moveend", onMoveEnd);
+            m.on("zoomend", onMoveEnd);
 
-        m.on("click", clearHalo);
-        m.on("popupclose", clearHalo);
+            m.on("click", clearHalo);
+            m.on("popupclose", clearHalo);
 
-        setMapReady(true);
-    }, [initialCenter, initialZoom, clearHalo]);
+            setMapReady(true);
+        },
+        [initialCenter, initialZoom, clearHalo]
+    );
 
-    // Fit once (no saved view)
     useEffect(() => {
         if (!mapReady || didFitOnce) return;
         const saved = loadView();
@@ -495,8 +530,7 @@ export default function DriversMapLeaflet({
         });
 
         const pointInRect = (p, r, pad = 0) =>
-            p.x >= r.x1 - pad && p.x <= r.x2 + pad &&
-            p.y >= r.y1 - pad && p.y <= r.y2 + pad;
+            p.x >= r.x1 - pad && p.x <= r.x2 + pad && p.y >= r.y1 - pad && p.y <= r.y2 + pad;
 
         function onMouseDown(e) {
             if (!selectMode || !e.shiftKey || e.button !== 0) return;
@@ -508,7 +542,7 @@ export default function DriversMapLeaflet({
             overlay = document.createElement("div");
             overlay.style.position = "absolute";
             overlay.style.left = `${startClient.x - cRect.left}px`;
-            overlay.style.top  = `${startClient.y - cRect.top}px`;
+            overlay.style.top = `${startClient.y - cRect.top}px`;
             overlay.style.width = "0px";
             overlay.style.height = "0px";
             overlay.style.border = "1.5px dashed rgba(0,120,255,0.9)";
@@ -534,9 +568,9 @@ export default function DriversMapLeaflet({
                 x2: Math.max(startClient.x, nowClient.x),
                 y2: Math.max(startClient.y, nowClient.y),
             };
-            overlay.style.left   = `${rrClient.x1 - cRect.left}px`;
-            overlay.style.top    = `${rrClient.y1 - cRect.top}px`;
-            overlay.style.width  = `${rrClient.x2 - rrClient.x1}px`;
+            overlay.style.left = `${rrClient.x1 - cRect.left}px`;
+            overlay.style.top = `${rrClient.y1 - cRect.top}px`;
+            overlay.style.width = `${rrClient.x2 - rrClient.x1}px`;
             overlay.style.height = `${rrClient.y2 - rrClient.y1}px`;
 
             const a = toContainerXY(startClient.x, startClient.y);
@@ -560,7 +594,9 @@ export default function DriversMapLeaflet({
 
             let changed = false;
             if (picked.size !== hoverIdsRef.current.size) changed = true;
-            else { for (const id of picked) { if (!hoverIdsRef.current.has(id)) { changed = true; break; } } }
+            else {
+                for (const id of picked) { if (!hoverIdsRef.current.has(id)) { changed = true; break; } }
+            }
             if (changed) {
                 hoverIdsRef.current = picked;
                 setHoverIds(picked);
@@ -602,12 +638,15 @@ export default function DriversMapLeaflet({
 
     /* ======== Live coloring ======== */
     const prevLiveSetRef = useRef(new Set());
-    const setIconForId = useCallback((id, on) => {
-        const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
-        if (!m) return;
-        const base = idBaseColor.get(id) || "#666";
-        m.setIcon(makePinIcon(base, !!on));
-    }, [idBaseColor]);
+    const setIconForId = useCallback(
+        (id, on) => {
+            const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
+            if (!m) return;
+            const base = idBaseColor.get(id) || "#666";
+            m.setIcon(makePinIcon(base, !!on));
+        },
+        [idBaseColor]
+    );
 
     useEffect(() => {
         const live = new Set([...selectedIds, ...hoverIds]);
@@ -628,8 +667,8 @@ export default function DriversMapLeaflet({
             for (const id of ids) {
                 const { stop } = findStopByIdLocal(id, localDriversRef.current, localUnroutedRef.current);
                 if (!stop) continue;
-                await onReassignRef.current?.(stop, to);  // persist (server)
-                moveStopsLocally([id], to);               // update local UI
+                await onReassignRef.current?.(stop, to); // persist (server)
+                moveStopsLocally([id], to); // update local UI
             }
         } catch (err) {
             console.error("[BulkAssign(sequential)] failed:", err);
@@ -665,7 +704,6 @@ export default function DriversMapLeaflet({
             getSelectedCount: () => selectedIds.size,
         };
         onExpose(api);
-        // run once
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -697,7 +735,7 @@ export default function DriversMapLeaflet({
                             height: 36,
                             borderRadius: 8,
                             border: "1px solid #ccc",
-                            padding: "0 34px 0 10px", // right padding for the clear button
+                            padding: "0 34px 0 10px",
                             outline: "none"
                         }}
                     />
@@ -746,7 +784,6 @@ export default function DriversMapLeaflet({
                                         key={id}
                                         type="button"
                                         onClick={() => {
-                                            // move to user and auto-clear the search bar
                                             focusResult(r, { clear: true });
                                         }}
                                         style={{ width: "100%", textAlign: "left", padding: "8px 10px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 6, cursor: ll ? "pointer" : "not-allowed", opacity: ll ? 1 : 0.6 }}
@@ -788,7 +825,6 @@ export default function DriversMapLeaflet({
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
         >
-            {/* Selection / Bulk bar */}
             {(selectedCount > 0 || hoverIds.size > 0) && (
                 <div
                     style={{
@@ -821,7 +857,7 @@ export default function DriversMapLeaflet({
                             }}
                         >
                             <option value="">Choose driver…</option>
-                            {localDrivers.map((opt) => (
+                            {sortedDrivers.map((opt) => (
                                 <option key={opt.driverId} value={opt.driverId}>{opt.name}</option>
                             ))}
                         </select>
@@ -868,7 +904,6 @@ export default function DriversMapLeaflet({
                 </div>
             )}
 
-            {/* Toggles + index */}
             <div
                 style={{
                     background: "rgba(255,255,255,0.97)",
@@ -929,6 +964,7 @@ export default function DriversMapLeaflet({
             </div>
         </div>
     );
+
     /* ======== Expose API (optional) ======== */
     useEffect(() => {
         if (!onExpose) return;
@@ -942,10 +978,8 @@ export default function DriversMapLeaflet({
         onExpose(api);
     }, []); // run once
 
-
     /* ------- Render ------- */
     return (
-
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
             {searchOverlay}
             {rightPanel}
@@ -977,7 +1011,7 @@ export default function DriversMapLeaflet({
 
                     {/* route lines */}
                     {showRouteLines &&
-                        localDrivers.map((d) => {
+                        sortedDrivers.map((d) => {
                             const pts = (d.stops || []).map(getLL).filter(Boolean);
                             if (pts.length < 2) return null;
                             return (
@@ -1011,7 +1045,7 @@ export default function DriversMapLeaflet({
                     })}
 
                     {/* ASSIGNED markers */}
-                    {localDrivers.map((d) =>
+                    {sortedDrivers.map((d) =>
                         (d.stops || []).map((s) => {
                             const ll = getLL(s); if (!ll) return null;
                             const id = sid(s.id);
@@ -1037,3 +1071,5 @@ export default function DriversMapLeaflet({
         </div>
     );
 }
+
+export const runtime = "nodejs";

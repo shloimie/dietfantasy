@@ -1,8 +1,9 @@
+export const runtime = "nodejs";
 import { NextResponse } from "next/server";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import prisma from "../../../../lib/prisma";
 import { planRoutesByAreaBalanced } from "../../../../utils/routing/areaBalance";
 
-const prisma = new PrismaClient({ log: [] }); // quiet prisma logs
 
 type Body = { day?: string; driverCount?: number; useDietFantasyStart?: boolean };
 type DriverLite = { id: number; name: string; color: string; day?: string | null };
@@ -67,10 +68,47 @@ export async function POST(req: Request) {
             });
         }
 
+        // Quick lookup map
+        const idToPoint = new Map<number, { id:number; lat:number; lng:number }>(pts.map(p => [p.id, p]));
+
         // 1) Build plan — returns: [ Driver0(outliers), route1..routeK ]
         const plan = planRoutesByAreaBalanced(pts, k);
         if (!Array.isArray(plan) || plan.length === 0) {
             throw new Error("Planner returned no routes.");
+        }
+
+        // 1.5) NEW: absorb Driver 0 outliers into nearest active route so no one is “lost”
+        //      (Everything geocoded ends up on Driver 1..K.)
+        if (plan.length >= 2 && (plan[0]?.stopIds?.length ?? 0) > 0) {
+            // compute centers for active routes (fallback to average of member points)
+            const centers = plan.slice(1).map((r, idx) => {
+                if (r?.center && Number.isFinite(r.center.lat) && Number.isFinite(r.center.lng)) return r.center;
+                const ptsIn = (r?.stopIds ?? []).map((sid: number) => idToPoint.get(sid)).filter(Boolean) as {lat:number; lng:number}[];
+                if (!ptsIn.length) return { lat: ORIGIN.lat, lng: ORIGIN.lng };
+                const lat = ptsIn.reduce((a,p)=>a+p.lat,0)/ptsIn.length;
+                const lng = ptsIn.reduce((a,p)=>a+p.lng,0)/ptsIn.length;
+                return { lat, lng };
+            });
+
+            const transferIds: number[] = plan[0].stopIds ?? [];
+
+            for (const sid of transferIds) {
+                const p = idToPoint.get(sid);
+                if (!p) continue;
+                // choose nearest active center
+                let bestI = 0, bestD = Infinity;
+                for (let i = 0; i < centers.length; i++) {
+                    const d = haversineMiles(p, centers[i]);
+                    if (d < bestD) { bestD = d; bestI = i; }
+                }
+                const destIndexInPlan = bestI + 1; // because plan[1] is Driver 1, etc.
+                plan[destIndexInPlan].stopIds = (plan[destIndexInPlan].stopIds ?? []).concat([sid]);
+                plan[destIndexInPlan].count = (plan[destIndexInPlan].count ?? 0) + 1;
+            }
+
+            // clear Driver 0
+            plan[0].stopIds = [];
+            plan[0].count = 0;
         }
 
         // 2) Ensure Driver 0 + Drivers 1..k exist
@@ -121,13 +159,14 @@ export async function POST(req: Request) {
             data: { stopIds: [] as unknown as Prisma.InputJsonValue },
         });
 
-        // 4) Assign stops for ALL planned routes (including Driver 0 at index 0)
+        // 4) Assign stops for ALL planned routes (including Driver 0 now empty)
         for (let i = 0; i < plan.length; i++) {
             const driverName = `Driver ${i}`;
             const d = drivers.find((x) => x.name === driverName);
             if (!d) continue;
 
-            const ids = plan[i].stopIds ?? [];
+            const ids = (plan[i].stopIds ?? []).filter((v: any) => Number.isFinite(Number(v))).map((n: any) => Number(n));
+
             if (ids.length > 0) {
                 await prisma.$transaction(
                     ids.map((stopId, idx) =>
@@ -213,12 +252,15 @@ export async function POST(req: Request) {
             }
         }
 
-        // 7) Respond
+        // 7) Respond (with a helpful count summary)
         const driversOut = await prisma.driver.findMany({
             where: driverWhere,
             orderBy: { id: "asc" }, // Driver 0 first
             select: { id: true, name: true, color: true, stopIds: true, day: true },
         });
+
+        const geocodedCount = pts.length;
+        const assignedCount = driversOut.reduce((sum, d) => sum + (Array.isArray(d.stopIds) ? d.stopIds.length : 0), 0);
 
         return NextResponse.json({
             ok: true,
@@ -230,13 +272,12 @@ export async function POST(req: Request) {
                     driverId: drv?.id ?? null,
                     driverName: drv?.name ?? `Driver ${i}`,
                     color: drv?.color ?? (i === 0 ? "#666666" : PALETTE[(i - 1) % PALETTE.length]),
-                    count: r.count,
+                    count: Array.isArray(drv?.stopIds) ? (drv!.stopIds as any[]).length : 0,
                     center: r.center,
-                    stopIds: r.stopIds,
+                    stopIds: drv?.stopIds ?? [],
                 };
             }),
-            message: `Loaded ${plan.length - 1} active routes (+ Driver 0 transfer). Stops per driver: [${plan
-                .slice(1).map((p) => p.count).join(", ")}]`,
+            message: `Geocoded: ${geocodedCount}. Assigned to active drivers: ${assignedCount} (Driver 0 absorbed).`,
         });
     } catch (e: any) {
         console.error("[/api/route/generate] Error:", e);

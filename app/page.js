@@ -1,4 +1,3 @@
-// app/page.js
 "use client";
 
 import * as React from "react";
@@ -289,41 +288,87 @@ export default function UsersPage() {
         }
     }, [visibleRows]);
 
+    /* ===== Driver-number aware labels export (keeps names + tiny numbers) ===== */
+    const parseDriverNum = (name) => {
+        const m = /driver\s+(\d+)/i.exec(String(name || ""));
+        return m ? parseInt(m[1], 10) : null;
+    };
+
     const doExportLabels = React.useCallback(async () => {
         try {
-            const routes = Array.isArray(mapData?.routes) ? mapData.routes : [];
-            if (!routes.length) return;
-            const res = await fetch("/api/labels/enrich", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ routes, users, strict: false, debug: true }),
+            // Need both: enriched stops AND driver meta (names/colors) to sort by true driver number
+            const dayKey = (mapData?.selectedDay || "all").toLowerCase();
+
+            const [routesRes, enrichRes] = await Promise.all([
+                fetch(`/api/route/routes?day=${encodeURIComponent(dayKey)}`, { cache: "no-store" }),
+                fetch("/api/labels/enrich", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        routes: Array.isArray(mapData?.routes) ? mapData.routes : [],
+                        users,
+                        strict: false,
+                        debug: false
+                    }),
+                }),
+            ]);
+
+            if (!routesRes.ok || !enrichRes.ok) return;
+
+            const routesData = await routesRes.json();
+            const { routes: enrichedRoutes } = await enrichRes.json();
+
+            const meta = (routesData?.routes || []).map((r, i) => ({
+                i,
+                num: parseDriverNum(r?.driverName || r?.name),
+                color: r?.color,
+            }));
+
+            // Sort: Driver 0, 1, 2 … (fallback to index when missing)
+            meta.sort((a, b) => {
+                const aa = Number.isFinite(a.num) ? a.num : a.i;
+                const bb = Number.isFinite(b.num) ? b.num : b.i;
+                return aa - bb || a.i - b.i;
             });
-            if (!res.ok) return;
-            const { routes: enrichedRoutes } = await res.json();
+
+            // Colors in sorted order
+            const colorsSorted = meta.map(m => m.color);
+
+            // Stamp __driverNumber (0-based) and __stopIndex on each stop, in sorted order
+            const enrichedSorted = meta.map((m, newIdx) => {
+                const n = Number.isFinite(m.num) ? m.num : newIdx; // zero-based
+                const arr = enrichedRoutes?.[m.i] || [];
+                return arr.map((s, si) => ({
+                    ...s,
+                    __driverNumber: n,
+                    __stopIndex: si,
+                }));
+            });
+
             const mod = await import("../utils/pdfRouteLabels");
             const fn = mod.exportRouteLabelsPDF || mod.default;
-            if (typeof fn === "function") await fn(enrichedRoutes, null, tsString);
+            if (typeof fn === "function") await fn(enrichedSorted, colorsSorted, tsString);
         } catch (e) {
             console.error("Export Route Labels failed:", e);
         }
-    }, [mapData?.routes, users]);
+    }, [mapData?.routes, mapData?.selectedDay, users]);
 
     return (
         <Box
             component="main"
             data-page="users"
             sx={{
-                height: "100vh",             // lock viewport height
+                height: "100vh",
                 width: "100vw",
                 bgcolor: "#7ed6a7",
                 p: "30px",
-                overflow: "hidden",          // prevent page scroll
+                overflow: "hidden",
                 display: "grid",
-                gridTemplateRows: "auto 1fr", // header + scrollable table area
+                gridTemplateRows: "auto 1fr",
                 gap: 8,
             }}
         >
-            {/* Header card (NOT sticky; page doesn't scroll anyway) */}
+            {/* Header card */}
             <Box
                 sx={{
                     position: "relative",
@@ -334,7 +379,7 @@ export default function UsersPage() {
                     boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
                     px: 3,
                     pt: 2.25,
-                    pb: 5,           // room for chin overlap
+                    pb: 5,
                     overflow: "visible",
                 }}
             >
@@ -370,8 +415,7 @@ export default function UsersPage() {
                     />
                 </Box>
 
-                {/* CHIN tucked UNDER the pill so its outline is hidden */}
-                {/* Floating toggle button (no chin) */}
+                {/* Floating toggle button */}
                 <IconButton
                     onClick={() => setOpenMore((v) => !v)}
                     aria-label={openMore ? "Hide more actions" : "Show more actions"}
@@ -380,38 +424,32 @@ export default function UsersPage() {
                         position: "absolute",
                         left: "50%",
                         transform: "translateX(-50%)",
-                        bottom: -28,                            // same spot where chin used to hang
+                        bottom: -28,
                         width: 48,
                         height: 48,
                         background: "#fff",
                         border: "1px solid rgba(0,0,0,0.10)",
                         borderRadius: "50%",
                         boxShadow: "0 8px 20px rgba(0,0,0,0.12)",
-                        zIndex: 3,                              // above the header surface
+                        zIndex: 3,
                         "&:hover": { background: "#fff" },
                     }}
                 >
                     {openMore ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                 </IconButton>
-
-
             </Box>
 
-            {/* Scrollable content area (this is the ONLY scroller) */}
+            {/* Scrollable content area */}
             <Box
                 sx={{
                     minHeight: 0,
-                    overflow: "hidden",               // the table inside handles scrollbars
+                    overflow: "hidden",
                     bgcolor: "#fff",
                     border: "1px solid rgba(0,0,0,0.08)",
                     borderRadius: 3,
-                    // px: 2,
-                    // pt: 4,                             // extra space so rows never touch the chin
-                    // pb: 5,
                     position: "relative",
                 }}
             >
-                {/* UsersTable owns its own scrollbars (both directions) */}
                 <UsersTable
                     users={users}
                     search={search}

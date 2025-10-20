@@ -1,13 +1,12 @@
-// lib/prisma.js
+// /lib/prisma.ts
 import { PrismaClient } from "@prisma/client";
 
-// Avoid creating multiple clients in dev (hot-reload)
-const globalForPrisma = globalThis;
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 export const prisma =
     globalForPrisma.prisma ??
     new PrismaClient({
-        // log: ["query", "error", "warn"],
+        log: process.env.NODE_ENV === "development" ? [] : [],
     });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

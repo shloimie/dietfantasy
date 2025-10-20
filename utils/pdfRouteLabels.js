@@ -1,12 +1,12 @@
 // utils/pdfRouteLabels.js
-// Route-ordered Avery 5163 labels (4" x 2", 2x5 per page).
+// Route-ordered Avery 5163 labels (4" × 2", 2×5 per page).
 // - Each driver’s non-complex stops print in route order, then page break.
 // - Complex stops print afterward, keeping their driver’s color.
 // - Each label shows a small “driver.stop” marker above the name (left-aligned).
 
 import jsPDF from "jspdf";
 
-/** Robust name selection */
+/* ---------- Name + complex helpers ---------- */
 function displayName(u = {}) {
     const cands = [
         u.name,
@@ -30,6 +30,7 @@ const toBool = (v) => {
     }
     return false;
 };
+
 const isComplexFallback = (u = {}) =>
     toBool(u?.complex) ||
     toBool(u?.isComplex) ||
@@ -38,7 +39,25 @@ const isComplexFallback = (u = {}) =>
     toBool(u?.User?.complex) ||
     toBool(u?.client?.complex);
 
-// Avery 5163 layout constants
+/* ---------- Driver/stop numbering helpers (zero-based safe) ---------- */
+function parseDriverNumFromName(name) {
+    const m = /driver\s+(\d+)/i.exec(String(name || ""));
+    return m ? parseInt(m[1], 10) : null;
+}
+
+function getDriverIdx0(u, routeIdx0) {
+    if (Number.isFinite(u?.__driverNumber)) return u.__driverNumber;
+    const parsed = parseDriverNumFromName(u?.__driverName);
+    if (Number.isFinite(parsed)) return parsed;
+    return routeIdx0;
+}
+
+function getStopNum1(u, localIdx0) {
+    if (Number.isFinite(u?.__stopIndex)) return u.__stopIndex + 1;
+    return localIdx0 + 1;
+}
+
+/* ---------- Layout constants ---------- */
 const LABEL_W = 4.0;
 const LABEL_H = 2.0;
 const MARGIN_L = 0.25;
@@ -52,7 +71,7 @@ const MAX_FONT = 11;
 const MIN_FONT = 6;
 const lineHeightFromFont = (pt) => Math.max(0.18, pt * 0.025);
 
-/** Small header above name, left aligned */
+/* ---------- Drawing helpers ---------- */
 function drawBadgeAbove(doc, x, y, text, colorRGB) {
     const prevSize = doc.getFontSize();
     const prevColor = doc.getTextColor();
@@ -60,7 +79,7 @@ function drawBadgeAbove(doc, x, y, text, colorRGB) {
         doc.setFontSize(6);
         doc.setTextColor(...colorRGB);
         const xx = x + PAD_L;
-        const yy = y + PAD_T - 0.08; // slightly above name line
+        const yy = y + PAD_T - 0.08;
         doc.text(String(text || ""), xx, yy, { baseline: "top", align: "left" });
     } finally {
         doc.setFontSize(prevSize);
@@ -87,9 +106,7 @@ function measureWrapped(doc, lines, font, maxWidth, lineH) {
             if (tw > maxWidth && line) {
                 y += lineH;
                 line = w;
-            } else {
-                line = test;
-            }
+            } else line = test;
         }
         y += lineH;
     }
@@ -112,7 +129,6 @@ function drawLines(doc, x, y, colorRGB, lines) {
     doc.setTextColor(...colorRGB);
     let yy = y + PAD_T;
     const xx = x + PAD_L;
-
     for (const ln of lines) {
         const text = ln || "";
         if (!text) {
@@ -128,9 +144,7 @@ function drawLines(doc, x, y, colorRGB, lines) {
                 doc.text(line, xx, yy, { baseline: "top" });
                 yy += lh;
                 line = w;
-            } else {
-                line = test;
-            }
+            } else line = test;
         }
         if (line) {
             doc.text(line, xx, yy, { baseline: "top" });
@@ -146,9 +160,7 @@ function advance(state, doc) {
         state.row++;
         state.x = MARGIN_L;
         state.y += LABEL_H;
-    } else {
-        state.x += LABEL_W;
-    }
+    } else state.x += LABEL_W;
     if (state.row === 5) {
         doc.addPage();
         state.x = MARGIN_L;
@@ -170,22 +182,14 @@ function atFreshTop(state) {
     return state.col === 0 && state.row === 0 && state.x === MARGIN_L && state.y === MARGIN_T;
 }
 
+/* ---------- Main export ---------- */
 export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
     const doc = new jsPDF({ unit: "in", format: "letter" });
 
     const DEFAULT_COLORS = [
-        "#1677FF",
-        "#52C41A",
-        "#FA8C16",
-        "#EB2F96",
-        "#13C2C2",
-        "#F5222D",
-        "#722ED1",
-        "#A0D911",
-        "#2F54EB",
-        "#FAAD14",
-        "#73D13D",
-        "#36CFC9",
+        "#1677FF", "#52C41A", "#FA8C16", "#EB2F96",
+        "#13C2C2", "#F5222D", "#722ED1", "#A0D911",
+        "#2F54EB", "#FAAD14", "#73D13D", "#36CFC9",
     ];
     const palette = Array.isArray(driverColors) && driverColors.length ? driverColors : DEFAULT_COLORS;
     const hexToRgb = (hex) => {
@@ -218,7 +222,11 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
                 (u.dislikes ? `Dislikes: ${u.dislikes}` : "").trim(),
             ].filter(Boolean);
 
-            drawBadgeAbove(doc, state.x, state.y, `${di + 1}.${si + 1}`, colorRGB);
+            // --- zero-based driver badge ---
+            const driverIdx0 = getDriverIdx0(u, di);
+            const stopNum1 = getStopNum1(u, si);
+            drawBadgeAbove(doc, state.x, state.y, `${driverIdx0}.${stopNum1}`, colorRGB);
+
             drawLines(doc, state.x, state.y, colorRGB, lines);
             printed = true;
             advance(state, doc);
@@ -227,7 +235,7 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
         if (printed && !atFreshTop(state)) resetPage(state, doc);
     });
 
-    // Summary
+    // Console summary
     try {
         const perDriver = routes.map((stops, i) => ({
             driver: i + 1,
@@ -254,7 +262,9 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
 
         for (const { u, driverIdx, stopIdx } of complexAll) {
             const colorRGB = hexToRgb(palette[driverIdx % palette.length]);
-            drawBadgeAbove(doc, state.x, state.y, `${driverIdx + 1}.${stopIdx + 1}`, colorRGB);
+            const driverIdx0 = getDriverIdx0(u, driverIdx);
+            const stopNum1 = getStopNum1(u, stopIdx);
+            drawBadgeAbove(doc, state.x, state.y, `${driverIdx0}.${stopNum1}`, colorRGB);
 
             const lines = [
                 displayName(u),

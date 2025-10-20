@@ -1,6 +1,6 @@
 // utils/driversPdf.js
 // Generates a Word .docx, but exposes a jsPDF-style API:
-//   const doc = buildDriversPDF(...); doc.save("drivers.pdf");
+//   const doc = buildDriversPDF(...); doc.save("drivers.docx");
 // Also provides exportDriversPDF(users, selectedDay, driverCount) for one-shot export.
 
 import {
@@ -50,14 +50,36 @@ async function buildDocx({ routes, unrouted = [], selectedDay = "all" }) {
     const dayTitle = normalizeDay(selectedDay) ? selectedDay : "All Days";
     const sections = [];
 
-    routes.forEach((stops, i) => {
-        const nextMiles = stops.map((s, idx) => (idx < stops.length - 1 ? haversineMi(stops[idx], stops[idx+1]) : null));
+    // Reorder: Drivers 1..N first, Driver 0 LAST
+    const reordered = (routes || []).slice().sort((a, b) => {
+        // Try to detect driver number from first stop metadata / name; fall back to index in original array
+        const getNum = (stops, idxFallback) => {
+            let n = null;
+            for (const s of (stops || [])) {
+                if (Number.isFinite(s?.__driverNumber)) { n = s.__driverNumber; break; }
+                if (s?.__driverName) {
+                    const m = /driver\s+(\d+)/i.exec(String(s.__driverName));
+                    if (m) { n = parseInt(m[1], 10); break; }
+                }
+            }
+            return Number.isFinite(n) ? n : idxFallback;
+        };
+        const ra = getNum(a, 0);
+        const rb = getNum(b, 0);
+        const ka = ra === 0 ? Number.POSITIVE_INFINITY : ra;
+        const kb = rb === 0 ? Number.POSITIVE_INFINITY : rb;
+        return ka - kb;
+    });
+
+    reordered.forEach((stops, i) => {
+        const nextMiles = (stops || []).map((s, idx) => (idx < (stops?.length||0) - 1 ? haversineMi(stops[idx], stops[idx+1]) : null));
         const totalMiles = nextMiles.reduce((a,v)=>a+(v||0),0);
-        const stopsCount = stops.length;
+        const stopsCount = (stops || []).length;
         const estMin = Math.round(totalMiles * MIN_PER_MILE + stopsCount * MIN_PER_STOP);
 
         const children = [];
 
+        // MAIN PAGE: keep the original 1-based driver headings exactly as before
         children.push(new Paragraph({ text: `Driver ${i+1} — ${dayTitle}`, heading: HeadingLevel.HEADING_1 }));
         children.push(new Paragraph({
             children: [
@@ -70,7 +92,7 @@ async function buildDocx({ routes, unrouted = [], selectedDay = "all" }) {
         if (!stopsCount) {
             children.push(new Paragraph("(No assigned stops)"));
         } else {
-            stops.forEach((s, idx) => {
+            (stops || []).forEach((s, idx) => {
                 const name  = `${s.first ?? ""} ${s.last ?? ""}`.trim() || "Customer";
                 const addr1 = `${s.address ?? ""}${s.apt ? " " + s.apt : ""}`.trim();
                 const addr2 = `${s.city ?? ""}`.trim();

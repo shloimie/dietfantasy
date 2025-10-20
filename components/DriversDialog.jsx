@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: false });
 
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
+// ⬇️ Restore the original labels renderer so names & tiny numbers render as before
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 
 /* =================== helpers / palette =================== */
@@ -123,6 +124,16 @@ function markStopComplex(stop, idx, idxs) {
 
     return { ...s, complex: false, __complexSource: "none" };
 }
+
+/* ===== driver numbering helpers (keep Driver 0 first) ===== */
+const parseDriverNum = (name) => {
+    const m = /driver\s+(\d+)/i.exec(String(name || ""));
+    return m ? parseInt(m[1], 10) : null;
+};
+const rankForRoute = (route, idxFallback = 0) => {
+    const n = parseDriverNum(route?.driverName || route?.name);
+    return Number.isFinite(n) ? n : idxFallback;
+};
 
 /* ======================================================== */
 
@@ -249,7 +260,7 @@ export default function DriversDialog({
             // make sure we always have a numeric, unique driverId
             const driverId = Number(r.driverId ?? r.id);
             const color = r.color || palette[i % palette.length];
-            const dname = r.driverName || r.name || `Driver ${i + 1}`;
+            const dname = r.driverName || r.name || `Driver ${i}`;
 
             const stops = (r.stops || [])
                 .map((u, idx) => ({
@@ -274,7 +285,6 @@ export default function DriversDialog({
             return { id: String(driverId), driverId, name: dname, color, polygon: [], stops };
         });
     }, [routes]);
-
 
     const routeStops = React.useMemo(() => routes.map(r => (r.stops || [])), [routes]);
     const driverColors = React.useMemo(() => routes.map((r, i) => r.color || palette[i % palette.length]), [routes]);
@@ -359,6 +369,51 @@ export default function DriversDialog({
         }
     }
 
+    // ===== Sort routes so Driver 0 is first; propagate numbers to stops for PDF =====
+// ===== Sort routes so Driver 0 is first; propagate numbers & names to stops for PDF =====
+    const parseDriverNum = (name) => {
+        const m = /driver\s+(\d+)/i.exec(String(name || ""));
+        return m ? parseInt(m[1], 10) : null;
+    };
+    const rankForRoute = (route, idxFallback = 0) => {
+        const n = parseDriverNum(route?.driverName || route?.name);
+        return Number.isFinite(n) ? n : idxFallback;
+    };
+
+    const buildSortedForLabels = React.useCallback(() => {
+        // Build sortable meta
+        const meta = (routes || []).map((r, i) => ({
+            i,
+            num: rankForRoute(r, i),                 // numeric driver rank if present
+            color: r?.color,
+            name: r?.driverName || r?.name || `Driver ${i}`,
+        }));
+
+        // Sort: Driver 0, 1, 2 … (fallback to index when missing)
+        meta.sort((a, b) => {
+            const aa = Number.isFinite(a.num) ? a.num : a.i;
+            const bb = Number.isFinite(b.num) ? b.num : b.i;
+            return aa - bb || a.i - b.i;
+        });
+
+        // Colors in sorted order (fallback palette)
+        const colorsSorted = meta.map((m, idx) => m.color || driverColors[m.i] || palette[idx % palette.length]);
+
+        // Stamp zero-based driver number AND explicit "Driver X" name on each stop
+        const enrichedSorted = meta.map((m, newIdx) => {
+            const driverNum = Number.isFinite(m.num) ? m.num : newIdx; // zero-based
+            const driverName = `Driver ${driverNum}`;
+            const arr = (routeStops[m.i] || []);
+            return arr.map((s, si) => ({
+                ...s,
+                __driverNumber: driverNum,          // 0-based; if the PDF does (+1), you still get 0 -> 1 only if they add; we override name too
+                __driverName: driverName,           // force exact label text “Driver 0/1/…”
+                __stopIndex: si,                    // 0-based stop index (PDF usually renders 1-based for readability)
+            }));
+        });
+
+        return { enrichedSorted, colorsSorted };
+    }, [routes, routeStops, driverColors]);
     return (
         <>
             <ManualGeocodeDialog
@@ -417,11 +472,8 @@ export default function DriversDialog({
                             drivers={mapDrivers}
                             unrouted={unrouted}
                             onReassign={handleReassign}
-                            onExpose={(api) => {
-                                // IMPORTANT: do not set state here; just store the ref
-                                mapApiRef.current = api || null;
-                            }}
-                            onComputedStats={(s) => setStats(s)} // safe: called only when values actually changed
+                            onExpose={(api) => { mapApiRef.current = api || null; }}
+                            onComputedStats={(s) => setStats(s)}
                             initialCenter={[40.7128, -74.006]}
                             initialZoom={10}
                         />
@@ -455,27 +507,33 @@ export default function DriversDialog({
                         </Typography>
                     )}
 
+                    {/* Download Labels — use pdfRouteLabels with sorted order & stamped numbers */}
                     <Button
                         onClick={async () => {
                             setBusy(true);
                             try {
+                                // 1) Mark complex flags on the original stops (keeps names/phones intact)
                                 const idxs = buildComplexIndex(users);
-                                const enriched = (routeStops || []).map((stops) =>
+                                const complexMarked = (routeStops || []).map((stops) =>
                                     (stops || []).map((s, si) => markStopComplex(s, si, idxs))
                                 );
 
-                                const perDriver = enriched.map((stops, i) => ({
-                                    driver: i + 1,
-                                    complex: stops.filter(x => x.complex).length,
-                                    total: stops.length,
-                                }));
-                                const totalCx = perDriver.reduce((a,r)=>a+r.complex,0);
-                                console.groupCollapsed("[DriversDialog] Route labels — complex summary");
-                                console.table(perDriver);
-                                console.info("Complex total:", totalCx);
-                                console.groupEnd();
+                                // 2) Sort routes so Driver 0 is first and stamp driverNumber/driverName/stopIndex
+                                const { enrichedSorted, colorsSorted } = buildSortedForLabels();
 
-                                await exportRouteLabelsPDF(enriched, driverColors, tsString);
+                                // 3) Merge complex flags back into the stamped objects by stop id
+                                const complexById = new Map();
+                                complexMarked.forEach(route => route.forEach(s => complexById.set(String(s.id), s)));
+
+                                const stampedWithComplex = enrichedSorted.map(route =>
+                                    route.map(s => {
+                                        const cm = complexById.get(String(s.id));
+                                        return cm ? { ...s, complex: cm.complex, __complexSource: cm.__complexSource } : s;
+                                    })
+                                );
+
+                                // 4) Render with the original pdfRouteLabels (names + tiny numbers preserved)
+                                await exportRouteLabelsPDF(stampedWithComplex, colorsSorted, tsString);
                             } finally {
                                 setBusy(false);
                             }
