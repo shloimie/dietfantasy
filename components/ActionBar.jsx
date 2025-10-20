@@ -85,46 +85,150 @@ export default function ActionBar({
                 />
 
                 <Chip label={`Total: ${total}`} variant="outlined" sx={{ fontWeight: 700 }} />
+                <Button
+                    variant="contained"
+                    onClick={onAddUser}
+                    disabled={disabled}
+                    sx={{
+                        minWidth: 120,
+                        borderRadius: 9999,
+                        fontWeight: 600,
+                        textTransform: "none",
+                        background: "linear-gradient(90deg, #4ade80, #22c55e)",
+                        color: "#fff",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+                        transition: "all 0.2s ease",
+                        "&:hover": {
+                            background: "linear-gradient(90deg, #22c55e, #16a34a)",
+                            boxShadow: "0 4px 10px rgba(0,0,0,0.1)",
+                            transform: "translateY(-1px)",
+                        },
+                    }}
+                >
+                    Add User
+                </Button>
+
 
                 <Button
                     variant="contained"
-                    color="info"
                     onClick={onOpenDrivers}
                     disabled={disabled}
                     startIcon={<RouteIcon />}
-                    sx={{ minWidth: 120, borderRadius: 9999 }}
+                    sx={{
+                        minWidth: 120,
+                        borderRadius: 9999,
+                        fontWeight: 600,
+                        textTransform: "none",
+                        background: "linear-gradient(90deg, #4ade80, #22c55e)", // lighter green gradient
+                        color: "#fff",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+                        transition: "all 0.2s ease",
+                        "&:hover": {
+                            background: "linear-gradient(90deg, #22c55e, #16a34a)",
+                            boxShadow: "0 4px 10px rgba(0,0,0,0.1)",
+                            transform: "translateY(-1px)",
+                        },
+                    }}
                 >
                     Route
                 </Button>
             </Box>
 
             {/* Expanded shelf */}
+            {/* Expanded shelf */}
             <Collapse in={openMore} unmountOnExit>
                 <Box
                     sx={{
                         mt: 2,
                         background: "#fff",
-                        border: "1px solid rgba(0,0,0,0.12)",
+                        border: "1px solid rgba(0,0,0,0.08)",
                         borderRadius: 2,
                         boxShadow: "0 8px 22px rgba(16,24,40,.06), 0 2px 8px rgba(16,24,40,.04)",
                         px: 2,
                         py: 1.5,
                     }}
                 >
-                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
-                        <Button variant="contained" onClick={onAddUser} disabled={disabled}>
-                            Add User
-                        </Button>
-                        <Button variant="outlined" onClick={onExportExcel} disabled={disabled}>
+                    <Stack
+                        direction="row"
+                        spacing={1.5}
+                        useFlexGap
+                        flexWrap="wrap"
+                        justifyContent="center"
+                        sx={{
+                            py: 1,
+                            "& button": {
+                                borderRadius: "9999px",
+                                textTransform: "none",
+                                fontWeight: 600,
+                                px: 2.5,
+                                transition: "all 0.2s ease",
+                            },
+                        }}
+                    >
+
+
+                        {/* Outlined buttons */}
+                        <Button
+                            variant="outlined"
+                            onClick={onExportExcel}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#22c55e",
+                                color: "#166534",
+                                "&:hover": {
+                                    borderColor: "#16a34a",
+                                    backgroundColor: "rgba(34,197,94,0.08)",
+                                },
+                            }}
+                        >
                             Export Excel
                         </Button>
-                        <Button variant="outlined" onClick={onExportClientPdf} disabled={disabled}>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onExportClientPdf}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#22c55e",
+                                color: "#166534",
+                                "&:hover": {
+                                    borderColor: "#16a34a",
+                                    backgroundColor: "rgba(34,197,94,0.08)",
+                                },
+                            }}
+                        >
                             Export Clients (PDF)
                         </Button>
-                        <Button variant="outlined" onClick={onExportLabels} disabled={disabled}>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onExportLabels}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#22c55e",
+                                color: "#166534",
+                                "&:hover": {
+                                    borderColor: "#16a34a",
+                                    backgroundColor: "rgba(34,197,94,0.08)",
+                                },
+                            }}
+                        >
                             Labels (PDF)
                         </Button>
-                        <Button variant="outlined" onClick={onOpenCityColors} disabled={disabled}>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onOpenCityColors}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#22c55e",
+                                color: "#166534",
+                                "&:hover": {
+                                    borderColor: "#16a34a",
+                                    backgroundColor: "rgba(34,197,94,0.08)",
+                                },
+                            }}
+                        >
                             City Colors
                         </Button>
                     </Stack>

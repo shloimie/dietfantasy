@@ -443,10 +443,7 @@ export async function POST(req: Request) {
         page.drawText(`Date: ${dateString}`, { x: margin + drawW + 60, y: yImg + drawH / 2, size: 12, font });
 
         // Footer
-        page.drawText(
-            "For internal use only – retain this attestation for program and audit records.",
-            { x: margin, y: 72, size: 10, font, color: rgb(0.3, 0.3, 0.3) }
-        );
+
 
         // Return PDF
 

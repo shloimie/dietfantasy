@@ -28,6 +28,8 @@ const EMPTY = {
 };
 
 function normalizeUser(u = {}) {
+    const isNew = !u.id;
+
     return {
         ...EMPTY,
         ...u,
@@ -41,10 +43,17 @@ function normalizeUser(u = {}) {
         state: u.state ?? "",
         phone: u.phone ?? "",
         dislikes: u.dislikes ?? "",
-        medicaid: !!u.medicaid,
-        paused: !!u.paused,
-        complex: !!u.complex,
+
+        // ✅ Default Medicaid to true for new users
+        medicaid: isNew ? !!(u.medicaid ?? true) : !!u.medicaid,
+
+        // keep existing behavior for others (but safe defaults for new)
+        paused: isNew ? !!(u.paused ?? false) : !!u.paused,
+        complex: isNew ? !!(u.complex ?? false) : !!u.complex,
+
+        // you already default new user schedule to all true
         schedule: u.id ? { ...ALL_FALSE, ...(u.schedule || {}) } : { ...ALL_TRUE },
+
         lat: typeof u.lat === "number" ? u.lat : (typeof u.latitude === "number" ? u.latitude : null),
         lng: typeof u.lng === "number" ? u.lng : (typeof u.longitude === "number" ? u.longitude : null),
     };
