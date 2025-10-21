@@ -15,8 +15,10 @@ import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 
 /* =================== helpers / palette =================== */
 const palette = [
-    "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
-    "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"
+    "#1f77b4","#ff7f0e","#2ca02c",
+    "#d62728","#9467bd",
+    "#8c564b","#e377c2",
+    "#fc9003","#bcbd22","#17becf"
 ];
 
 const nameOf = (u = {}) => {
@@ -472,28 +474,29 @@ export default function DriversDialog({
                             drivers={mapDrivers}
                             unrouted={unrouted}
                             onReassign={handleReassign}
+                            busy={busy}
                             onExpose={(api) => { mapApiRef.current = api || null; }}
                             onComputedStats={(s) => setStats(s)}
                             initialCenter={[40.7128, -74.006]}
-                            initialZoom={10}
+                            initialZoom={5}
                         />
 
-                        {busy && (
-                            <Box
-                                sx={{
-                                    position: "absolute", inset: 0, display: "flex",
-                                    alignItems: "flex-start", justifyContent: "center",
-                                    pointerEvents: "none", background: "rgba(255,255,255,0.35)"
-                                }}
-                            >
-                                <Box sx={{ mt: 2 }}>
-                                    <LinearProgress sx={{ width: 260 }} />
-                                    <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 0.5, opacity: 0.8 }}>
-                                        Loading…
-                                    </Typography>
-                                </Box>
-                            </Box>
-                        )}
+                        {/*{busy && (*/}
+                        {/*    <Box*/}
+                        {/*        sx={{*/}
+                        {/*            position: "absolute", inset: 0, display: "flex",*/}
+                        {/*            alignItems: "flex-start", justifyContent: "center",*/}
+                        {/*            pointerEvents: "none", background: "rgba(255,255,255,0.35)"*/}
+                        {/*        }}*/}
+                        {/*    >*/}
+                        {/*        <Box sx={{ mt: 2 }}>*/}
+                        {/*            <LinearProgress sx={{ width: 260 }} />*/}
+                        {/*            <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 0.5, opacity: 0.8 }}>*/}
+                        {/*                Loading…*/}
+                        {/*            </Typography>*/}
+                        {/*        </Box>*/}
+                        {/*    </Box>*/}
+                        {/*)}*/}
                     </Box>
                 </DialogContent>
 

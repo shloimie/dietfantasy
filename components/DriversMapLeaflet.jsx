@@ -12,6 +12,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import MapLoadingOverlay from "./MapLoadingOverlay";
 
 /* ==================== Config / constants ==================== */
 
@@ -41,7 +42,8 @@ const toNum = (v) => {
     return Number.isFinite(n) ? n : null;
 };
 const getLL = (s) => {
-    const lat = toNum(s?.lat), lng = toNum(s?.lng);
+    const lat = toNum(s?.lat),
+        lng = toNum(s?.lng);
     return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
 };
 const asLeafletMarker = (maybe) => {
@@ -56,6 +58,64 @@ const asLeafletMarker = (maybe) => {
 function driverRankByName(name) {
     const m = /driver\s+(\d+)/i.exec(String(name || ""));
     return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+/** Helper to read boolean-ish values across shapes */
+function truthyish(v) {
+    if (v === true || v === 1) return true;
+    if (typeof v === "string") {
+        const s = v.trim().toLowerCase();
+        return s === "true" || s === "1" || s === "yes" || s === "y";
+    }
+    return false;
+}
+
+/** Robust paused detector (common variants + strings) */
+function isPausedStop(s) {
+    // common boolean/flag fields across different payloads
+    const flags = [
+        s?.paused,
+        s?.isPaused,
+        s?.pause,
+        s?.onHold,
+        s?.hold,
+        s?.flags?.paused,
+        s?.flags?.hold,
+        s?.user?.paused,
+        s?.user?.isPaused,
+        s?.visit?.paused,
+        // timestamps often used to mark a hold
+        (s?.pausedAt ?? s?.holdUntil ?? s?.onHoldUntil ?? null) ? true : false,
+    ];
+    if (flags.some(truthyish)) return true;
+
+    // status-like strings used by different backends
+    const statusCandidates = [
+        s?.status,
+        s?.state,
+        s?.routeStatus,
+        s?.deliveryStatus,
+        s?.visitStatus,
+        s?.user?.status,
+        s?.flags?.status,
+        s?.note, // sometimes "paused" appears in a note
+        s?.pausedReason,
+    ].map((x) => (x == null ? "" : String(x).toLowerCase()));
+
+    for (const status of statusCandidates) {
+        if (
+            status.includes("pause") ||
+            status.includes("on hold") ||
+            status.includes("on_hold") ||
+            status === "hold" ||
+            status === "paused" ||
+            status === "skipped" ||
+            status === "skip"
+        ) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* ==================== Icons (anchor-fixed) ==================== */
@@ -108,9 +168,11 @@ function makePinIcon(color = "#1f77b4", selected = false) {
 function findStopByIdLocal(id, drivers, unrouted) {
     const key = sid(id);
     for (const d of drivers) for (const s of d.stops || []) {
-        if (sid(s.id) === key) return { stop: s, color: d.color || "#1f77b4", fromDriverId: d.driverId };
+        if (sid(s.id) === key)
+            return { stop: s, color: d.color || "#1f77b4", fromDriverId: d.driverId };
     }
-    for (const s of unrouted || []) if (sid(s.id) === key) return { stop: s, color: "#666", fromDriverId: null };
+    for (const s of unrouted || [])
+        if (sid(s.id) === key) return { stop: s, color: "#666", fromDriverId: null };
     return { stop: null, color: "#666", fromDriverId: null };
 }
 
@@ -118,8 +180,12 @@ function findStopByIdLocal(id, drivers, unrouted) {
 const VIEW_KEY = "driversMap:view";
 function saveView(map) {
     try {
-        const c = map.getCenter(), z = map.getZoom();
-        sessionStorage.setItem(VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
+        const c = map.getCenter(),
+            z = map.getZoom();
+        sessionStorage.setItem(
+            VIEW_KEY,
+            JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z })
+        );
     } catch {}
 }
 function loadView() {
@@ -127,7 +193,12 @@ function loadView() {
         const raw = sessionStorage.getItem(VIEW_KEY);
         if (!raw) return null;
         const v = JSON.parse(raw);
-        if (Number.isFinite(v?.lat) && Number.isFinite(v?.lng) && Number.isFinite(v?.zoom)) return v;
+        if (
+            Number.isFinite(v?.lat) &&
+            Number.isFinite(v?.lng) &&
+            Number.isFinite(v?.zoom)
+        )
+            return v;
     } catch {}
     return null;
 }
@@ -137,7 +208,9 @@ function MapBridge({ onReady }) {
     const map = useMap();
     const onReadyRef = useRef(onReady);
     const calledRef = useRef(false);
-    useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+    useEffect(() => {
+        onReadyRef.current = onReady;
+    }, [onReady]);
     useEffect(() => {
         if (map && !calledRef.current) {
             calledRef.current = true;
@@ -171,14 +244,20 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
   `;
     const sel = container.querySelector("#__assignSel");
     const o0 = document.createElement("option");
-    o0.value = ""; o0.textContent = "Select driver…"; o0.disabled = true; o0.selected = true;
+    o0.value = "";
+    o0.textContent = "Select driver…";
+    o0.disabled = true;
+    o0.selected = true;
     sel.appendChild(o0);
 
     // ensure popup's driver list also shows 0,1,2…
-    const sortedDrivers = [...drivers].sort((a, b) => driverRankByName(a.name) - driverRankByName(b.name));
+    const sortedDrivers = [...drivers].sort(
+        (a, b) => driverRankByName(a.name) - driverRankByName(b.name)
+    );
     for (const d of sortedDrivers) {
         const o = document.createElement("option");
-        o.value = String(d.driverId); o.textContent = d.name;
+        o.value = String(d.driverId);
+        o.textContent = d.name;
         sel.appendChild(o);
     }
     sel.addEventListener("change", () => {
@@ -200,8 +279,14 @@ function CheckRow({ id, checked, onChange, label, title }) {
             htmlFor={id}
             title={title}
             style={{
-                display: "flex", alignItems: "center", gap: 10, fontSize: 13, userSelect: "none",
-                cursor: "pointer", padding: "8px 10px", borderRadius: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontSize: 13,
+                userSelect: "none",
+                cursor: "pointer",
+                padding: "8px 10px",
+                borderRadius: 10,
                 border: selected ? "1px solid #99c2ff" : "1px solid #e5e7eb",
                 background: selected ? "#eef5ff" : "#fff",
                 color: selected ? "#0b66ff" : "#111827",
@@ -213,7 +298,13 @@ function CheckRow({ id, checked, onChange, label, title }) {
                 type="checkbox"
                 checked={checked}
                 onChange={(e) => onChange?.(e.target.checked)}
-                style={{ width: 18, height: 18, transform: "scale(1.25)", accentColor: "#0b66ff", cursor: "pointer" }}
+                style={{
+                    width: 18,
+                    height: 18,
+                    transform: "scale(1.25)",
+                    accentColor: "#0b66ff",
+                    cursor: "pointer",
+                }}
             />
             <span style={{ lineHeight: 1 }}>{label}</span>
         </label>
@@ -229,26 +320,42 @@ export default function DriversMapLeaflet({
                                               initialCenter = [40.7128, -74.006],
                                               initialZoom = 10,
                                               showRouteLinesDefault = false,
+                                              busy = false, // external loading flag
+                                              pausedDetector, // optional override for paused detection
+                                              logoSrc, // optional loading logo (path or URL)
                                           }) {
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
     const [didFitOnce, setDidFitOnce] = useState(false);
 
     const onReassignRef = useRef(onReassign);
-    useEffect(() => { onReassignRef.current = onReassign; }, [onReassign]);
+    useEffect(() => {
+        onReassignRef.current = onReassign;
+    }, [onReassign]);
 
     const [localDrivers, setLocalDrivers] = useState(drivers || []);
     const [localUnrouted, setLocalUnrouted] = useState(unrouted || []);
     const localDriversRef = useRef(localDrivers);
     const localUnroutedRef = useRef(localUnrouted);
-    useEffect(() => { localDriversRef.current = localDrivers; }, [localDrivers]);
-    useEffect(() => { localUnroutedRef.current = localUnrouted; }, [localUnrouted]);
-    useEffect(() => { setLocalDrivers(Array.isArray(drivers) ? drivers : []); }, [drivers]);
-    useEffect(() => { setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []); }, [unrouted]);
+    useEffect(() => {
+        localDriversRef.current = localDrivers;
+    }, [localDrivers]);
+    useEffect(() => {
+        localUnroutedRef.current = localUnrouted;
+    }, [localUnrouted]);
+    useEffect(() => {
+        setLocalDrivers(Array.isArray(drivers) ? drivers : []);
+    }, [drivers]);
+    useEffect(() => {
+        setLocalUnrouted(Array.isArray(unrouted) ? unrouted : []);
+    }, [unrouted]);
 
     // 🔑 Always-sorted view of drivers so 0 is first
     const sortedDrivers = useMemo(
-        () => (localDrivers || []).slice().sort((a, b) => driverRankByName(a.name) - driverRankByName(b.name)),
+        () =>
+            (localDrivers || [])
+                .slice()
+                .sort((a, b) => driverRankByName(a.name) - driverRankByName(b.name)),
         [localDrivers]
     );
 
@@ -263,15 +370,29 @@ export default function DriversMapLeaflet({
     const [bulkBusy, setBulkBusy] = useState(false);
     const selectedCount = selectedIds.size;
 
-    const [selectedHalo, setSelectedHalo] = useState({ lat: null, lng: null, color: "#666" });
-    const clearHalo = useCallback(() => setSelectedHalo({ lat: null, lng: null, color: "#666" }), []);
+    const [selectedHalo, setSelectedHalo] = useState({
+        lat: null,
+        lng: null,
+        color: "#666",
+    });
+    const clearHalo = useCallback(
+        () => setSelectedHalo({ lat: null, lng: null, color: "#666" }),
+        []
+    );
 
     /* ------- derived ------- */
     const hasLL = (s) => !!getLL(s);
     const allPoints = useMemo(() => {
         const pts = [];
-        for (const d of sortedDrivers) for (const s of d.stops || []) { const ll = getLL(s); if (ll) pts.push(ll); }
-        for (const s of localUnrouted) { const ll = getLL(s); if (ll) pts.push(ll); }
+        for (const d of sortedDrivers)
+            for (const s of d.stops || []) {
+                const ll = getLL(s);
+                if (ll) pts.push(ll);
+            }
+        for (const s of localUnrouted) {
+            const ll = getLL(s);
+            if (ll) pts.push(ll);
+        }
         return pts;
     }, [sortedDrivers, localUnrouted]);
 
@@ -296,11 +417,36 @@ export default function DriversMapLeaflet({
             })),
         [sortedDrivers]
     );
-    const totalAssigned = useMemo(() => indexItems.reduce((s, x) => s + x.count, 0), [indexItems]);
+    const totalAssigned = useMemo(
+        () => indexItems.reduce((s, x) => s + x.count, 0),
+        [indexItems]
+    );
+
+    // Header totals
+    const unroutedVisible = useMemo(
+        () => unroutedFiltered.filter(hasLL).length,
+        [unroutedFiltered]
+    );
+    const totalVisibleStops = totalAssigned + unroutedVisible;
+
+    const pausedVisible = useMemo(() => {
+        const detect = typeof pausedDetector === "function" ? pausedDetector : isPausedStop;
+        let c = 0;
+        for (const d of sortedDrivers) {
+            for (const s of d.stops || []) {
+                if (hasLL(s) && detect(s)) c++;
+            }
+        }
+        for (const s of unroutedFiltered) {
+            if (hasLL(s) && detect(s)) c++;
+        }
+        return c;
+    }, [sortedDrivers, unroutedFiltered, pausedDetector]);
 
     const idBaseColor = useMemo(() => {
         const m = new Map();
-        for (const d of sortedDrivers) for (const s of d.stops || []) m.set(sid(s.id), d.color || "#1f77b4");
+        for (const d of sortedDrivers)
+            for (const s of d.stops || []) m.set(sid(s.id), d.color || "#1f77b4");
         for (const s of localUnrouted) m.set(sid(s.id), "#666");
         return m;
     }, [sortedDrivers, localUnrouted]);
@@ -346,7 +492,16 @@ export default function DriversMapLeaflet({
 
         const finalDrivers = injected
             ? nextDrivers
-            : [...nextDrivers, { driverId: toId, name: `Driver ${toId}`, color: "#1f77b4", stops: movingStops, polygon: [] }];
+            : [
+                ...nextDrivers,
+                {
+                    driverId: toId,
+                    name: `Driver ${toId}`,
+                    color: "#1f77b4",
+                    stops: movingStops,
+                    polygon: [],
+                },
+            ];
 
         setLocalDrivers(finalDrivers);
         setLocalUnrouted(nextUnrouted);
@@ -393,15 +548,39 @@ export default function DriversMapLeaflet({
 
     useEffect(() => {
         const needle = q.trim().toLowerCase();
-        if (!needle) { setResults([]); return; }
-        const rows = [];
-        for (const d of sortedDrivers) for (const s of d.stops || []) {
-            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
-            if (hay.includes(needle)) rows.push({ ...s, __driverId: d.driverId, __driverName: d.name, __unrouted: false, __color: d.color });
+        if (!needle) {
+            setResults([]);
+            return;
         }
+        const rows = [];
+        for (const d of sortedDrivers)
+            for (const s of d.stops || []) {
+                const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+                if (hay.includes(needle))
+                    rows.push({
+                        ...s,
+                        __driverId: d.driverId,
+                        __driverName: d.name,
+                        __unrouted: false,
+                        __color: d.color,
+                    });
+            }
         for (const s of unroutedFiltered) {
-            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone].filter(Boolean).join(" ").toLowerCase();
-            if (hay.includes(needle)) rows.push({ ...s, __driverId: null, __driverName: "Unrouted", __unrouted: true, __color: "#666" });
+            const hay = [s.name, s.address, s.city, s.state, s.zip, s.phone]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+            if (hay.includes(needle))
+                rows.push({
+                    ...s,
+                    __driverId: null,
+                    __driverName: "Unrouted",
+                    __unrouted: true,
+                    __color: "#666",
+                });
         }
         setResults(rows.slice(0, 50));
     }, [q, sortedDrivers, unroutedFiltered]);
@@ -414,7 +593,11 @@ export default function DriversMapLeaflet({
             if (!map || !ll) return;
             map.setView(ll, Math.max(map.getZoom(), 14), { animate: true });
 
-            const { stop, color } = findStopByIdLocal(row.id, localDriversRef.current, localUnroutedRef.current);
+            const { stop, color } = findStopByIdLocal(
+                row.id,
+                localDriversRef.current,
+                localUnroutedRef.current
+            );
             openAssignForStop(stop || row, color || row.__color || "#1f77b4");
 
             if (clear) clearSearch();
@@ -428,7 +611,9 @@ export default function DriversMapLeaflet({
             const next = new Set(prev);
             if (forceOn === true) next.add(id);
             else if (forceOn === false) next.delete(id);
-            else { next.has(id) ? next.delete(id) : next.add(id); }
+            else {
+                next.has(id) ? next.delete(id) : next.add(id);
+            }
             return next;
         });
     }, []);
@@ -476,7 +661,10 @@ export default function DriversMapLeaflet({
     useEffect(() => {
         if (!mapReady || didFitOnce) return;
         const saved = loadView();
-        if (saved) { setDidFitOnce(true); return; }
+        if (saved) {
+            setDidFitOnce(true);
+            return;
+        }
         if (!allPoints.length) return;
         try {
             const b = L.latLngBounds(allPoints);
@@ -530,7 +718,10 @@ export default function DriversMapLeaflet({
         });
 
         const pointInRect = (p, r, pad = 0) =>
-            p.x >= r.x1 - pad && p.x <= r.x2 + pad && p.y >= r.y1 - pad && p.y <= r.y2 + pad;
+            p.x >= r.x1 - pad &&
+            p.x <= r.x2 + pad &&
+            p.y >= r.y1 - pad &&
+            p.y <= r.y2 + pad;
 
         function onMouseDown(e) {
             if (!selectMode || !e.shiftKey || e.button !== 0) return;
@@ -554,7 +745,8 @@ export default function DriversMapLeaflet({
             lockMap();
             clearHalo();
             map.closePopup();
-            e.preventDefault(); e.stopPropagation();
+            e.preventDefault();
+            e.stopPropagation();
         }
 
         function onMouseMove(e) {
@@ -595,14 +787,20 @@ export default function DriversMapLeaflet({
             let changed = false;
             if (picked.size !== hoverIdsRef.current.size) changed = true;
             else {
-                for (const id of picked) { if (!hoverIdsRef.current.has(id)) { changed = true; break; } }
+                for (const id of picked) {
+                    if (!hoverIdsRef.current.has(id)) {
+                        changed = true;
+                        break;
+                    }
+                }
             }
             if (changed) {
                 hoverIdsRef.current = picked;
                 setHoverIds(picked);
             }
 
-            e.preventDefault(); e.stopPropagation();
+            e.preventDefault();
+            e.stopPropagation();
         }
 
         function onMouseUp(e) {
@@ -620,9 +818,11 @@ export default function DriversMapLeaflet({
             hoverIdsRef.current = new Set();
 
             if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
-            overlay = null; startClient = null;
+            overlay = null;
+            startClient = null;
             unlockMap();
-            e.preventDefault(); e.stopPropagation();
+            e.preventDefault();
+            e.stopPropagation();
         }
 
         container.addEventListener("mousedown", onMouseDown, true);
@@ -640,7 +840,9 @@ export default function DriversMapLeaflet({
     const prevLiveSetRef = useRef(new Set());
     const setIconForId = useCallback(
         (id, on) => {
-            const m = assignedMarkerRefs.current.get(id) || unroutedMarkerRefs.current.get(id);
+            const m =
+                assignedMarkerRefs.current.get(id) ||
+                unroutedMarkerRefs.current.get(id);
             if (!m) return;
             const base = idBaseColor.get(id) || "#666";
             m.setIcon(makePinIcon(base, !!on));
@@ -651,39 +853,50 @@ export default function DriversMapLeaflet({
     useEffect(() => {
         const live = new Set([...selectedIds, ...hoverIds]);
         const prev = prevLiveSetRef.current;
-        live.forEach((id) => { if (!prev.has(id)) setIconForId(id, true); });
-        prev.forEach((id) => { if (!live.has(id)) setIconForId(id, false); });
+        live.forEach((id) => {
+            if (!prev.has(id)) setIconForId(id, true);
+        });
+        prev.forEach((id) => {
+            if (!live.has(id)) setIconForId(id, false);
+        });
         prevLiveSetRef.current = live;
     }, [selectedIds, hoverIds, setIconForId]);
 
     /* ======== TRUE SEQUENTIAL BULK ASSIGN ======== */
-    const applyBulkAssign = useCallback(async (toDriverId) => {
-        const to = Number(toDriverId);
-        const ids = Array.from(selectedIds);
-        if (!Number.isFinite(to) || ids.length === 0 || bulkBusy) return;
+    const applyBulkAssign = useCallback(
+        async (toDriverId) => {
+            const to = Number(toDriverId);
+            const ids = Array.from(selectedIds);
+            if (!Number.isFinite(to) || ids.length === 0 || bulkBusy) return;
 
-        setBulkBusy(true);
-        try {
-            for (const id of ids) {
-                const { stop } = findStopByIdLocal(id, localDriversRef.current, localUnroutedRef.current);
-                if (!stop) continue;
-                await onReassignRef.current?.(stop, to); // persist (server)
-                moveStopsLocally([id], to); // update local UI
+            setBulkBusy(true);
+            try {
+                for (const id of ids) {
+                    const { stop } = findStopByIdLocal(
+                        id,
+                        localDriversRef.current,
+                        localUnroutedRef.current
+                    );
+                    if (!stop) continue;
+                    await onReassignRef.current?.(stop, to); // persist (server)
+                    moveStopsLocally([id], to); // update local UI
+                }
+            } catch (err) {
+                console.error("[BulkAssign(sequential)] failed:", err);
+            } finally {
+                // Clear selection & highlights
+                prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
+                prevLiveSetRef.current = new Set();
+                setSelectedIds(new Set());
+                setHoverIds(new Set());
+                hoverIdsRef.current = new Set();
+                setBulkDriverId("");
+                clearHalo();
+                setBulkBusy(false);
             }
-        } catch (err) {
-            console.error("[BulkAssign(sequential)] failed:", err);
-        } finally {
-            // Clear selection & highlights
-            prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
-            prevLiveSetRef.current = new Set();
-            setSelectedIds(new Set());
-            setHoverIds(new Set());
-            hoverIdsRef.current = new Set();
-            setBulkDriverId("");
-            clearHalo();
-            setBulkBusy(false);
-        }
-    }, [selectedIds, bulkBusy, moveStopsLocally, clearHalo, setIconForId]);
+        },
+        [selectedIds, bulkBusy, moveStopsLocally, clearHalo, setIconForId]
+    );
 
     const clearSelection = useCallback(() => {
         prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
@@ -699,6 +912,9 @@ export default function DriversMapLeaflet({
     useEffect(() => {
         if (!onExpose) return;
         const api = {
+            getMap: () => mapRef.current,
+            flyTo: (lat, lng, zoom = 15) =>
+                mapRef.current?.flyTo([lat, lng], zoom, { animate: true }),
             applyBulkAssign,
             clearSelection,
             getSelectedCount: () => selectedIds.size,
@@ -707,302 +923,420 @@ export default function DriversMapLeaflet({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    /* ======== UI overlays ======== */
+    /* ------- Render ------- */
+    const showOverlay = !!busy || !!bulkBusy;
 
-    // Left: Search (with clear "X" and auto-clear after selecting a result)
-    const searchOverlay = (
-        <div
-            style={{ position: "absolute", zIndex: 1000, left: 10, top: 10, width: 360, pointerEvents: "auto" }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-        >
-            <div style={{ background: "rgba(255,255,255,0.97)", border: "1px solid #ddd", borderRadius: 12, padding: 10, boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}>
-                <div style={{ position: "relative" }}>
-                    <input
-                        ref={searchInputRef}
-                        value={q}
-                        onChange={(e) => setQ(e.target.value)}
-                        placeholder="Search name, address, phone… (Enter selects first)"
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && results.length) {
-                                // focus first result and auto-clear search
-                                focusResult(results[0], { clear: true });
-                            }
-                        }}
-                        style={{
-                            width: "100%",
-                            height: 36,
-                            borderRadius: 8,
-                            border: "1px solid #ccc",
-                            padding: "0 34px 0 10px",
-                            outline: "none"
-                        }}
-                    />
-                    {q.trim() && (
-                        <button
-                            type="button"
-                            aria-label="Clear search"
-                            onClick={clearSearch}
-                            style={{
-                                position: "absolute",
-                                right: 6,
-                                top: "50%",
-                                transform: "translateY(-50%)",
-                                width: 24,
-                                height: 24,
-                                borderRadius: 12,
-                                border: "1px solid #ddd",
-                                background: "#f8f8f8",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontSize: 14,
-                                lineHeight: 1,
-                                userSelect: "none"
-                            }}
-                            title="Clear"
-                        >
-                            ×
-                        </button>
-                    )}
-                </div>
-
-                {q.trim() && (
-                    <div style={{ marginTop: 8, borderTop: "1px solid #eee", maxHeight: 260, overflowY: "auto", borderRadius: 8 }}>
-                        {results.length === 0 ? (
-                            <div style={{ padding: "8px 6px", fontSize: 12, opacity: 0.7 }}>No matches</div>
-                        ) : (
-                            results.map((r) => {
-                                const id = sid(r.id);
-                                const ll = getLL(r);
-                                const sub = `${r.address || ""}${r.apt ? " " + r.apt : ""}`.trim()
-                                    || [r.city, r.state, r.zip].filter(Boolean).join(" ");
-                                return (
-                                    <button
-                                        key={id}
-                                        type="button"
-                                        onClick={() => {
-                                            focusResult(r, { clear: true });
-                                        }}
-                                        style={{ width: "100%", textAlign: "left", padding: "8px 10px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 6, cursor: ll ? "pointer" : "not-allowed", opacity: ll ? 1 : 0.6 }}
-                                        title={r.__driverId ? `Driver: ${r.__driverName}` : "Unrouted"}
-                                    >
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                            <span style={{ width: 12, height: 12, borderRadius: 3, background: r.__color || "#999", border: "1px solid rgba(0,0,0,0.2)" }} />
-                                            <div style={{ flex: 1, minWidth: 0 }}>
-                                                <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name || "(Unnamed)"}</div>
-                                                <div style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
-                                            </div>
-                                            {r.__driverId != null && <div style={{ fontSize: 11, opacity: 0.8 }}>{r.__driverName}</div>}
-                                        </div>
-                                    </button>
-                                );
-                            })
-                        )}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-
-    // Right: Tools + legend + bulk assign
-    const rightPanel = (
-        <div
-            style={{
-                position: "absolute",
-                zIndex: 1000,
-                top: 12,
-                right: 12,
-                width: 320,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-                pointerEvents: "auto",
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-        >
-            {(selectedCount > 0 || hoverIds.size > 0) && (
+    return (
+        <div style={{ height: "100%", width: "100%", position: "relative" }}>
+            {/* Left: Search overlay */}
+            <div
+                style={{
+                    position: "absolute",
+                    zIndex: 1000,
+                    left: 10,
+                    top: 10,
+                    width: 360,
+                    pointerEvents: "auto",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div
                     style={{
-                        background: "rgba(255,255,255,0.98)",
-                        border: "1px solid #cde",
+                        background: "rgba(255,255,255,0.97)",
+                        border: "1px solid #ddd",
                         borderRadius: 12,
                         padding: 10,
-                        boxShadow: "0 6px 18px rgba(0,0,0,0.18)",
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+                    }}
+                >
+                    <div style={{ position: "relative" }}>
+                        <input
+                            ref={searchInputRef}
+                            value={q}
+                            onChange={(e) => setQ(e.target.value)}
+                            placeholder="Search name, address, phone… (Enter selects first)"
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && results.length) {
+                                    // focus first result and auto-clear search
+                                    focusResult(results[0], { clear: true });
+                                }
+                            }}
+                            style={{
+                                width: "100%",
+                                height: 36,
+                                borderRadius: 8,
+                                border: "1px solid #ccc",
+                                padding: "0 34px 0 10px",
+                                outline: "none",
+                            }}
+                        />
+                        {q.trim() && (
+                            <button
+                                type="button"
+                                aria-label="Clear search"
+                                onClick={clearSearch}
+                                style={{
+                                    position: "absolute",
+                                    right: 6,
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    width: 24,
+                                    height: 24,
+                                    borderRadius: 12,
+                                    border: "1px solid #ddd",
+                                    background: "#f8f8f8",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontSize: 14,
+                                    lineHeight: 1,
+                                    userSelect: "none",
+                                }}
+                                title="Clear"
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+
+                    {q.trim() && (
+                        <div
+                            style={{
+                                marginTop: 8,
+                                borderTop: "1px solid #eee",
+                                maxHeight: 260,
+                                overflowY: "auto",
+                                borderRadius: 8,
+                            }}
+                        >
+                            {results.length === 0 ? (
+                                <div style={{ padding: "8px 6px", fontSize: 12, opacity: 0.7 }}>
+                                    No matches
+                                </div>
+                            ) : (
+                                results.map((r) => {
+                                    const id = sid(r.id);
+                                    const ll = getLL(r);
+                                    const sub =
+                                        `${r.address || ""}${r.apt ? " " + r.apt : ""}`.trim() ||
+                                        [r.city, r.state, r.zip].filter(Boolean).join(" ");
+                                    return (
+                                        <button
+                                            key={id}
+                                            type="button"
+                                            onClick={() => {
+                                                focusResult(r, { clear: true });
+                                            }}
+                                            style={{
+                                                width: "100%",
+                                                textAlign: "left",
+                                                padding: "8px 10px",
+                                                background: "#fff",
+                                                border: "1px solid #eee",
+                                                borderRadius: 8,
+                                                marginBottom: 6,
+                                                cursor: ll ? "pointer" : "not-allowed",
+                                                opacity: ll ? 1 : 0.6,
+                                            }}
+                                            title={
+                                                r.__driverId ? `Driver: ${r.__driverName}` : "Unrouted"
+                                            }
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 8,
+                                                }}
+                                            >
+                        <span
+                            style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: 3,
+                                background: r.__color || "#999",
+                                border: "1px solid rgba(0,0,0,0.2)",
+                            }}
+                        />
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div
+                                                        style={{
+                                                            fontSize: 13,
+                                                            fontWeight: 700,
+                                                            whiteSpace: "nowrap",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                        }}
+                                                    >
+                                                        {r.name || "(Unnamed)"}
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            fontSize: 12,
+                                                            opacity: 0.8,
+                                                            whiteSpace: "nowrap",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                        }}
+                                                    >
+                                                        {sub}
+                                                    </div>
+                                                </div>
+                                                {r.__driverId != null && (
+                                                    <div style={{ fontSize: 11, opacity: 0.8 }}>
+                                                        {r.__driverName}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Right: Tools + legend + bulk assign */}
+            <div
+                style={{
+                    position: "absolute",
+                    zIndex: 1000,
+                    top: 12,
+                    right: 12,
+                    width: 320,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    pointerEvents: "auto",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
+                {(selectedCount > 0 || hoverIds.size > 0) && (
+                    <div
+                        style={{
+                            background: "rgba(255,255,255,0.98)",
+                            border: "1px solid #cde",
+                            borderRadius: 12,
+                            padding: 10,
+                            boxShadow: "0 6px 18px rgba(0,0,0,0.18)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            outline: "2px solid rgba(0,120,255,0.15)",
+                        }}
+                    >
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>
+                            {selectedCount} selected
+                            {hoverIds.size ? ` (+${hoverIds.size} preview)` : ""}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <label style={{ fontSize: 12 }}>Assign to:</label>
+                            <select
+                                value={bulkDriverId}
+                                onChange={(e) => setBulkDriverId(e.target.value)}
+                                disabled={bulkBusy}
+                                style={{
+                                    padding: "6px 8px",
+                                    borderRadius: 8,
+                                    border: "1px solid #ccc",
+                                    flex: "1 1 auto",
+                                    opacity: bulkBusy ? 0.7 : 1,
+                                }}
+                            >
+                                <option value="">Choose driver…</option>
+                                {sortedDrivers.map((opt) => (
+                                    <option key={opt.driverId} value={opt.driverId}>
+                                        {opt.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={() => applyBulkAssign(bulkDriverId)}
+                                disabled={!bulkDriverId || bulkBusy || selectedCount === 0}
+                                style={{
+                                    padding: "8px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #2a7",
+                                    background:
+                                        !bulkDriverId || bulkBusy || selectedCount === 0
+                                            ? "#f6f6f6"
+                                            : "#eaffea",
+                                    cursor:
+                                        !bulkDriverId || bulkBusy || selectedCount === 0
+                                            ? "not-allowed"
+                                            : "pointer",
+                                    fontWeight: 600,
+                                    whiteSpace: "nowrap",
+                                }}
+                                title={bulkBusy ? "Assigning…" : `Assign ${selectedCount}`}
+                            >
+                                {bulkBusy ? "Assigning…" : `Assign ${selectedCount}`}
+                            </button>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                                onClick={clearSelection}
+                                disabled={bulkBusy}
+                                style={{
+                                    flex: 1,
+                                    padding: "8px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #ddd",
+                                    background: "#fff",
+                                    cursor: bulkBusy ? "not-allowed" : "pointer",
+                                    fontWeight: 600,
+                                    opacity: bulkBusy ? 0.7 : 1,
+                                }}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                        <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
+                            Box: hold <b>Shift</b> and drag (add). Hold{" "}
+                            <b>Alt/Option/Ctrl/Cmd</b> when releasing to subtract.
+                            <br />
+                            Click: enable <b>Click to select</b>, or hold{" "}
+                            <b>Alt/Option/Ctrl/Cmd</b> while clicking a dot.
+                        </div>
+                    </div>
+                )}
+
+                <div
+                    style={{
+                        background: "rgba(255,255,255,0.97)",
+                        border: "1px solid #ddd",
+                        borderRadius: 12,
+                        padding: 10,
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+                        overflow: "auto",
+                        maxHeight: "55vh",
                         display: "flex",
                         flexDirection: "column",
                         gap: 8,
-                        outline: "2px solid rgba(0,120,255,0.15)",
                     }}
                 >
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>
-                        {selectedCount} selected{hoverIds.size ? ` (+${hoverIds.size} preview)` : ""}
+                    {/* NEW: header text */}
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                        Stops: {totalVisibleStops} &nbsp;
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <label style={{ fontSize: 12 }}>Assign to:</label>
-                        <select
-                            value={bulkDriverId}
-                            onChange={(e) => setBulkDriverId(e.target.value)}
-                            disabled={bulkBusy}
-                            style={{
-                                padding: "6px 8px",
-                                borderRadius: 8,
-                                border: "1px solid #ccc",
-                                flex: "1 1 auto",
-                                opacity: bulkBusy ? 0.7 : 1,
-                            }}
-                        >
-                            <option value="">Choose driver…</option>
-                            {sortedDrivers.map((opt) => (
-                                <option key={opt.driverId} value={opt.driverId}>{opt.name}</option>
-                            ))}
-                        </select>
-                        <button
-                            onClick={() => applyBulkAssign(bulkDriverId)}
-                            disabled={!bulkDriverId || bulkBusy || selectedCount === 0}
-                            style={{
-                                padding: "8px 10px",
-                                borderRadius: 10,
-                                border: "1px solid #2a7",
-                                background: !bulkDriverId || bulkBusy || selectedCount === 0 ? "#f6f6f6" : "#eaffea",
-                                cursor: !bulkDriverId || bulkBusy || selectedCount === 0 ? "not-allowed" : "pointer",
-                                fontWeight: 600,
-                                whiteSpace: "nowrap",
-                            }}
-                            title={bulkBusy ? "Assigning…" : `Assign ${selectedCount}`}
-                        >
-                            {bulkBusy ? "Assigning…" : `Assign ${selectedCount}`}
-                        </button>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                            onClick={clearSelection}
-                            disabled={bulkBusy}
-                            style={{
-                                flex: 1,
-                                padding: "8px 10px",
-                                borderRadius: 10,
-                                border: "1px solid #ddd",
-                                background: "#fff",
-                                cursor: bulkBusy ? "not-allowed" : "pointer",
-                                fontWeight: 600,
-                                opacity: bulkBusy ? 0.7 : 1,
-                            }}
-                        >
-                            Clear
-                        </button>
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
-                        Box: hold <b>Shift</b> and drag (add). Hold <b>Alt/Option/Ctrl/Cmd</b> when releasing to subtract.
-                        <br />
-                        Click: enable <b>Click to select</b>, or hold <b>Alt/Option/Ctrl/Cmd</b> while clicking a dot.
-                    </div>
-                </div>
-            )}
 
-            <div
-                style={{
-                    background: "rgba(255,255,255,0.97)",
-                    border: "1px solid #ddd",
-                    borderRadius: 12,
-                    padding: 10,
-                    boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-                    overflow: "auto",
-                    maxHeight: "55vh",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                }}
-            >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                    Drivers ({totalAssigned} visible)
-                </div>
+                    <CheckRow
+                        id="toggle-routes"
+                        checked={showRouteLines}
+                        onChange={setShowRouteLines}
+                        label="Show route lines"
+                        title="Draw a line connecting stops in order for each driver"
+                    />
+                    <CheckRow
+                        id="toggle-area"
+                        checked={selectMode}
+                        onChange={setSelectMode}
+                        label="Area select (Shift+drag)"
+                        title="Shift-drag to select, Alt/Option/Ctrl/Cmd to subtract"
+                    />
+                    <CheckRow
+                        id="toggle-click"
+                        checked={clickPickMode}
+                        onChange={setClickPickMode}
+                        label="Click to select (one-by-one)"
+                        title="When ON, clicking a dot toggles selection (no popup)"
+                    />
 
-                <CheckRow
-                    id="toggle-routes"
-                    checked={showRouteLines}
-                    onChange={setShowRouteLines}
-                    label="Show route lines"
-                    title="Draw a line connecting stops in order for each driver"
+                    <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+                        Unrouted (visible): {unroutedVisible}
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {indexItems.map((it) => (
+                            <div
+                                key={it.driverId}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    fontSize: 13,
+                                }}
+                            >
+                <span
+                    style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        background: it.color,
+                        border: "1px solid rgba(0,0,0,0.15)",
+                    }}
                 />
-                <CheckRow
-                    id="toggle-area"
-                    checked={selectMode}
-                    onChange={setSelectMode}
-                    label="Area select (Shift+drag)"
-                    title="Shift-drag to select, Alt/Option/Ctrl/Cmd to subtract"
-                />
-                <CheckRow
-                    id="toggle-click"
-                    checked={clickPickMode}
-                    onChange={setClickPickMode}
-                    label="Click to select (one-by-one)"
-                    title="When ON, clicking a dot toggles selection (no popup)"
-                />
-
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-                    Unrouted (visible): {unroutedFiltered.filter(hasLL).length}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {indexItems.map((it) => (
-                        <div key={it.driverId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                            <span style={{ width: 16, height: 16, borderRadius: 4, background: it.color, border: "1px solid rgba(0,0,0,0.15)" }} />
-                            <div title={it.name} style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                {it.name}
+                                <div
+                                    title={it.name}
+                                    style={{
+                                        flex: 1,
+                                        whiteSpace: "nowrap",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                    }}
+                                >
+                                    {it.name}
+                                </div>
+                                <div
+                                    style={{
+                                        fontVariantNumeric: "tabular-nums",
+                                        opacity: 0.85,
+                                        paddingLeft: 6,
+                                    }}
+                                >
+                                    {it.count}
+                                </div>
                             </div>
-                            <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85, paddingLeft: 6 }}>
-                                {it.count}
-                            </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             </div>
-        </div>
-    );
 
-    /* ======== Expose API (optional) ======== */
-    useEffect(() => {
-        if (!onExpose) return;
-        const api = {
-            getMap: () => mapRef.current,
-            flyTo: (lat, lng, zoom = 15) => mapRef.current?.flyTo([lat, lng], zoom, { animate: true }),
-            applyBulkAssign,
-            clearSelection,
-            getSelectedCount: () => selectedIds.size,
-        };
-        onExpose(api);
-    }, []); // run once
-
-    /* ------- Render ------- */
-    return (
-        <div style={{ height: "100%", width: "100%", position: "relative" }}>
-            {searchOverlay}
-            {rightPanel}
-
-            <div style={{ height: "100%", width: "100%", borderRadius: 12, overflow: "hidden" }}>
+            {/* MAP */}
+            <div
+                style={{
+                    height: "100%",
+                    width: "100%",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    position: "relative",
+                }}
+            >
                 <MapContainer
                     key="drivers-map-stable"
                     center={initialCenter}
                     zoom={initialZoom}
-                    style={{ height: "100%", width: "100%" }}
+                    style={{
+                        height: "100%",
+                        width: "100%",
+                        filter: showOverlay ? "grayscale(30%) brightness(0.9)" : "none",
+                    }}
                     scrollWheelZoom
                     zoomControl={false}
                 >
                     <MapBridge onReady={handleMapReady} />
 
-                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
+                    <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution="&copy; OpenStreetMap contributors"
+                    />
                     <ZoomControl position="bottomleft" />
 
                     {/* halo */}
                     {Number.isFinite(selectedHalo.lat) && Number.isFinite(selectedHalo.lng) && (
                         <CircleMarker
                             center={[selectedHalo.lat, selectedHalo.lng]}
-                            pathOptions={{ color: selectedHalo.color, fillColor: selectedHalo.color, fillOpacity: 0.18 }}
+                            pathOptions={{
+                                color: selectedHalo.color,
+                                fillColor: selectedHalo.color,
+                                fillOpacity: 0.18,
+                            }}
                             radius={18}
                             weight={3}
                             interactive={false}
@@ -1018,15 +1352,19 @@ export default function DriversMapLeaflet({
                                 <Polyline
                                     key={`route-${String(d.driverId)}`}
                                     positions={pts}
-                                    pathOptions={{ color: d.color || "#1f77b4", weight: 4, opacity: 0.8 }}
+                                    pathOptions={{
+                                        color: d.color || "#1f77b4",
+                                        weight: 4,
+                                        opacity: 0.8,
+                                    }}
                                 />
                             );
-                        })
-                    }
+                        })}
 
                     {/* UNROUTED markers */}
                     {unroutedFiltered.map((s) => {
-                        const ll = getLL(s); if (!ll) return null;
+                        const ll = getLL(s);
+                        if (!ll) return null;
                         const id = sid(s.id);
                         return (
                             <Marker
@@ -1047,7 +1385,8 @@ export default function DriversMapLeaflet({
                     {/* ASSIGNED markers */}
                     {sortedDrivers.map((d) =>
                         (d.stops || []).map((s) => {
-                            const ll = getLL(s); if (!ll) return null;
+                            const ll = getLL(s);
+                            if (!ll) return null;
                             const id = sid(s.id);
                             const base = d.color || "#1f77b4";
                             return (
@@ -1067,6 +1406,9 @@ export default function DriversMapLeaflet({
                         })
                     )}
                 </MapContainer>
+
+                {/* Loading overlay (separate component) */}
+                <MapLoadingOverlay show={showOverlay} logoSrc="/logo.png" />
             </div>
         </div>
     );
