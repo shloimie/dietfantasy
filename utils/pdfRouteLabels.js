@@ -39,6 +39,25 @@ const isComplexFallback = (u = {}) =>
     toBool(u?.User?.complex) ||
     toBool(u?.client?.complex);
 
+/* ---------- Dislikes (localized fallback only) ---------- */
+// Prefer top-level, but fall back to common nests.
+// Keep this tiny and local since the rest of the label is rendering fine.
+function getDislikes(u = {}) {
+    const v =
+        u.dislikes ??
+        u?.user?.dislikes ??
+        u?.User?.dislikes ??
+        u?.client?.dislikes ??
+        u?.flags?.dislikes ??
+        "";
+
+    const s = (v == null ? "" : String(v)).trim();
+    // Treat common "empty" indicators as none
+    if (/^(none|no|n\/a|na|nil|-|—|not applicable)$/i.test(s)) return "";
+    // If data was typed as "Dislikes: X", strip prefix
+    return s.replace(/^dislikes\s*:\s*/i, "").trim();
+}
+
 /* ---------- Driver/stop numbering helpers (zero-based safe) ---------- */
 function parseDriverNumFromName(name) {
     const m = /driver\s+(\d+)/i.exec(String(name || ""));
@@ -214,12 +233,14 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
                 return;
             }
 
+            const dislikeText = getDislikes(u);
+
             const lines = [
                 displayName(u),
                 `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
                 `${u.city ?? ""} ${u.state ?? ""}`.trim(),
                 (u.phone ? `Phone: ${u.phone}` : "").trim(),
-                (u.dislikes ? `Dislikes: ${u.dislikes}` : "").trim(),
+                dislikeText ? `Dislikes: ${dislikeText}` : "",
             ].filter(Boolean);
 
             // --- zero-based driver badge ---
@@ -266,12 +287,13 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
             const stopNum1 = getStopNum1(u, stopIdx);
             drawBadgeAbove(doc, state.x, state.y, `${driverIdx0}.${stopNum1}`, colorRGB);
 
+            const dislikeText = getDislikes(u);
             const lines = [
                 displayName(u),
                 `${u.address ?? ""}${u.apt ? " " + u.apt : ""}`.trim(),
                 `${u.city ?? ""} ${u.state ?? ""}`.trim(),
                 (u.phone ? `Phone: ${u.phone}` : "").trim(),
-                (u.dislikes ? `Dislikes: ${u.dislikes}` : "").trim(),
+                dislikeText ? `Dislikes: ${dislikeText}` : "",
             ].filter(Boolean);
 
             drawLines(doc, state.x, state.y, colorRGB, lines);

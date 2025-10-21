@@ -58,7 +58,15 @@ function rotateAtIndex<T>(arr: T[], idx: number) {
 
 async function ensureDriver(name: string, color: string, day: string) {
     const found = await prisma.driver.findFirst({ where: { name, day } });
-    if (found) return found;
+    if (found) {
+        if (found.color !== color) {
+            return prisma.driver.update({
+                where: { id: found.id },
+                data: { color },
+            });
+        }
+        return found;
+    }
     return prisma.driver.create({
         data: { name, color, day, stopIds: [] as unknown as Prisma.InputJsonValue },
     });

@@ -30,6 +30,7 @@ export async function GET(req: Request) {
         const driversRaw = await prisma.driver.findMany({ where: driverWhere });
 
         // 2) All stops (do NOT filter by day; legacy rows may not have it)
+        //    ⬇️ include dislikes so we can fall back to stop-level denorms if present
         const allStops = await prisma.stop.findMany({
             orderBy: { id: "asc" },
             select: {
@@ -44,6 +45,7 @@ export async function GET(req: Request) {
                 phone: true,
                 lat: true,
                 lng: true,
+                dislikes: true,  // <-- NEW
             },
         });
 
@@ -67,6 +69,7 @@ export async function GET(req: Request) {
                     phone: true,
                     lat: true,
                     lng: true,
+                    dislikes: true, // <-- NEW
                 },
             })
             : [];
@@ -93,12 +96,18 @@ export async function GET(req: Request) {
                 phone: string;
                 lat: number | null;
                 lng: number | null;
+                dislikes: string; // <-- NEW
             }
         >();
 
         for (const s of allStops) {
             const u = s.userId != null ? userById.get(s.userId) : undefined;
-            const name = [u?.first, u?.last].filter(Boolean).join(" ").trim() || "(Unnamed)";
+            const name =
+                [u?.first, u?.last].filter(Boolean).join(" ").trim() || "(Unnamed)";
+
+            // prefer live user value; fall back to stop’s denorm
+            const dislikes =
+                (u?.dislikes ?? s.dislikes ?? "") as string;
 
             stopById.set(sid(s.id), {
                 id: s.id,
@@ -115,6 +124,9 @@ export async function GET(req: Request) {
 
                 lat: toNum(u?.lat ?? s.lat),
                 lng: toNum(u?.lng ?? s.lng),
+
+                // ensure labels receive dislikes at the top level
+                dislikes: typeof dislikes === "string" ? dislikes.trim() : "",
             });
         }
 

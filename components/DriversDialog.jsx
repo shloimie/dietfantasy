@@ -15,10 +15,21 @@ import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
 
 /* =================== helpers / palette =================== */
 const palette = [
-    "#1f77b4","#ff7f0e","#2ca02c",
-    "#d62728","#9467bd",
-    "#8c564b","#e377c2",
-    "#fc9003","#bcbd22","#17becf"
+    "#1f77b4", // deep blue
+    "#ff7f0e", // orange
+    "#2ca02c", // green
+    "#d62728", // red
+    "#9467bd", // purple
+    "#8c564b", // brown
+    "#e377c2", // pink
+    "#17becf", // cyan
+    "#bcbd22", // olive
+    "#393b79", // indigo blue
+    "#ad494a", // muted brick red
+    "#637939", // olive green
+    "#ce6dbd", // lavender-magenta
+    "#8c6d31", // dark mustard
+    "#7f7f7f", // mid gray-brown (neutral contrast)
 ];
 
 const nameOf = (u = {}) => {

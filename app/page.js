@@ -32,7 +32,7 @@ function useUsersApi() {
     const refetch = React.useCallback(async () => {
         try {
             setLoading(true);
-            const res = await fetch("/api/users");
+            const res = await fetch("/api/users", { cache: "no-store" });
             const data = await res.json();
             setUsers(Array.isArray(data) ? data : data?.users || []);
         } catch (e) {
@@ -47,7 +47,10 @@ function useUsersApi() {
     }, [refetch]);
 
     return { users, isLoading: loading, refetch, onUsersPatched };
+
 }
+
+
 
 /* =========================
    City colors (DB-backed)
@@ -236,6 +239,37 @@ function markStopComplex(stop, forceIdx) {
    ========================= */
 export default function UsersPage() {
     const { users, isLoading, refetch, onUsersPatched } = useUsersApi();
+// Auto-refresh the users at least once an hour (no full page reload)
+    React.useEffect(() => {
+        const HOUR = 60 * 60 * 1000;
+        let last = Date.now();
+
+        const mark = () => (last = Date.now());
+
+        const timer = setInterval(async () => {
+            try {
+                await refetch();
+            } finally {
+                mark();
+            }
+        }, HOUR);
+
+        const onVis = async () => {
+            if (document.visibilityState === "visible" && Date.now() - last >= HOUR) {
+                try {
+                    await refetch();
+                } finally {
+                    mark();
+                }
+            }
+        };
+        document.addEventListener("visibilitychange", onVis);
+
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVis);
+        };
+    }, [refetch]);
 
     const {
         cityColors,

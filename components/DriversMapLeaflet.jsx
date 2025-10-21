@@ -221,10 +221,26 @@ function MapBridge({ onReady }) {
 }
 
 /* ==================== Programmatic popup ==================== */
+/** Assign popup with current driver preselected (if any) */
 function openAssignPopup({ map, stop, color, drivers, onAssign }) {
     if (!map || !stop) return;
     const ll = getLL(stop);
     if (!ll) return;
+
+    // Determine currently assigned driverId, if any
+    const stopId = sid(stop.id);
+    let currentDriverId = null;
+    // search drivers for this stop
+    for (const d of drivers || []) {
+        if ((d.stops || []).some((s) => sid(s.id) === stopId)) {
+            currentDriverId = d.driverId;
+            break;
+        }
+    }
+    // fallback to search result metadata (__driverId) if provided
+    if (currentDriverId == null && stop.__driverId != null) {
+        currentDriverId = stop.__driverId;
+    }
 
     const container = document.createElement("div");
     container.style.minWidth = "240px";
@@ -243,23 +259,32 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
     </div>
   `;
     const sel = container.querySelector("#__assignSel");
+
+    // Build options (sorted 0,1,2…)
+    const sortedDrivers = [...(drivers || [])].sort(
+        (a, b) => driverRankByName(a.name) - driverRankByName(b.name)
+    );
+
+    // placeholder stays but won't be selected if we know current
     const o0 = document.createElement("option");
     o0.value = "";
     o0.textContent = "Select driver…";
-    o0.disabled = true;
-    o0.selected = true;
+    o0.disabled = !!currentDriverId; // disabled if we have a current selection
+    o0.selected = !currentDriverId;
     sel.appendChild(o0);
 
-    // ensure popup's driver list also shows 0,1,2…
-    const sortedDrivers = [...drivers].sort(
-        (a, b) => driverRankByName(a.name) - driverRankByName(b.name)
-    );
     for (const d of sortedDrivers) {
         const o = document.createElement("option");
         o.value = String(d.driverId);
         o.textContent = d.name;
         sel.appendChild(o);
     }
+
+    // Preselect current driver
+    if (currentDriverId != null) {
+        sel.value = String(currentDriverId);
+    }
+
     sel.addEventListener("change", () => {
         const to = Number(sel.value);
         if (Number.isFinite(to)) onAssign?.(stop, to);
@@ -924,7 +949,16 @@ export default function DriversMapLeaflet({
     }, []);
 
     /* ------- Render ------- */
-    const showOverlay = !!busy || !!bulkBusy;
+    const showOverlay = !!busy || !!(bulkBusy);
+
+    // NEW: one-click select all unrouted (that are visible/geocoded)
+    const selectAllUnrouted = useCallback(() => {
+        const ids = unroutedFiltered.filter(hasLL).map((s) => sid(s.id));
+        setSelectedIds(new Set(ids));
+        // give a tiny visual ping by closing any open popup/halo
+        clearHalo();
+        mapRef.current?.closePopup();
+    }, [unroutedFiltered, clearHalo]);
 
     return (
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
@@ -1248,8 +1282,30 @@ export default function DriversMapLeaflet({
                         title="When ON, clicking a dot toggles selection (no popup)"
                     />
 
-                    <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-                        Unrouted (visible): {unroutedVisible}
+                    {/* Unrouted summary + NEW "Select all unrouted" */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontSize: 12, opacity: 0.8 }}>
+                            Unrouted (visible): {unroutedVisible}
+                        </div>
+                        {unroutedVisible > 0 && (
+                            <button
+                                type="button"
+                                onClick={selectAllUnrouted}
+                                title="Select all geocoded unrouted stops so you can bulk-assign them"
+                                style={{
+                                    marginLeft: "auto",
+                                    padding: "6px 8px",
+                                    borderRadius: 8,
+                                    border: "1px solid #cde",
+                                    background: "#f7fbff",
+                                    cursor: "pointer",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                }}
+                            >
+                                Select all unrouted
+                            </button>
+                        )}
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1408,7 +1464,7 @@ export default function DriversMapLeaflet({
                 </MapContainer>
 
                 {/* Loading overlay (separate component) */}
-                <MapLoadingOverlay show={showOverlay} logoSrc="/logo.png" />
+                <MapLoadingOverlay show={showOverlay} logoSrc={logoSrc || "/logo.png"} />
             </div>
         </div>
     );
