@@ -1,7 +1,7 @@
 // app/api/users/[id]/route.ts
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import prisma from "../../../../lib/prisma";
 import { geocodeIfNeeded } from "../../../../lib/geocode";
 import type { Prisma } from "@prisma/client";
@@ -33,10 +33,10 @@ const str = (v: any) => (v == null ? null : String(v));
 
 /* ====================== GET /api/users/[id] ====================== */
 export async function GET(
-    _req: Request,
-    { params }: { params: { id: string } }
+    _req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = params;
+    const { id } = await params;
     const user = await prisma.user.findUnique({
         where: { id: Number(id) },
         include: { schedule: true },
@@ -47,10 +47,10 @@ export async function GET(
 
 /* ====================== PUT /api/users/[id] ====================== */
 export async function PUT(
-    req: Request,
-    { params }: { params: { id: string } }
+    req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = params;
+    const { id } = await params;
     const userId = Number(id);
     const b = await req.json();
     const scheduleInput = sanitizeSchedule(b.schedule);
@@ -152,8 +152,6 @@ export async function PUT(
     });
 
     // === Cascade denormalized fields to Stops when needed ===
-    // If any address/phone/coords changed OR explicit cascade flag is set,
-    // push fresh values into all of the user's stops so routes/search/labels see the latest.
     const shouldCascade =
         cascadeStopsFlag ||
         addressChanged ||
@@ -189,10 +187,11 @@ export async function PUT(
 
 /* ====================== DELETE /api/users/[id] ====================== */
 export async function DELETE(
-    _req: Request,
-    { params }: { params: { id: string } }
+    _req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
 ) {
-    const userId = Number(params.id);
+    const { id } = await params;
+    const userId = Number(id);
 
     try {
         await prisma.$transaction(async (tx) => {

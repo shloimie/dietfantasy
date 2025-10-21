@@ -1,6 +1,6 @@
 // app/api/mobile/routes/route.ts
 import { NextResponse } from "next/server";
-import { Stop } from "@prisma/client";
+import { Stop, Prisma } from "@prisma/client";
 import prisma from "../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -27,12 +27,13 @@ export async function GET(req: Request) {
         const dayParam = (searchParams.get("day") ?? "all").toLowerCase();
 
         // 1) Fetch drivers (include day="all" when a specific day is requested)
-        const where =
-            dayParam === "all"
-                ? {}
-                : {
-                    OR: [{ day: dayParam }, { day: "all" }],
-                } as const;
+        let where: Prisma.DriverWhereInput = {};
+        if (dayParam !== "all") {
+            // IMPORTANT: no `as const` — Prisma wants a mutable array type
+            where = {
+                OR: [{ day: dayParam }, { day: "all" }],
+            };
+        }
 
         const drivers = await prisma.driver.findMany({
             where,

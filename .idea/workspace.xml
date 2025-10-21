@@ -5,14 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="new loading and colors">
-      <change afterPath="$PROJECT_DIR$/components/MapLoadingOverlay.jsx" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/public/logo.png" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/generate/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/generate/route.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/mobile/routes/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/mobile/routes/route.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/route/add-stop/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/add-stop/route.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/api/users/[id]/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/users/[id]/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversMap.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMap.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -300,7 +296,15 @@
       <option name="project" value="LOCAL" />
       <updated>1761051966606</updated>
     </task>
-    <option name="localTasksCounter" value="26" />
+    <task id="LOCAL-00026" summary="new loading and colors">
+      <option name="closed" value="true" />
+      <created>1761056588147</created>
+      <option name="number" value="00026" />
+      <option name="presentableId" value="LOCAL-00026" />
+      <option name="project" value="LOCAL" />
+      <updated>1761056588147</updated>
+    </task>
+    <option name="localTasksCounter" value="27" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
