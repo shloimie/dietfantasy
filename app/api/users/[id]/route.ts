@@ -18,8 +18,9 @@ function sanitizeSchedule(input: any) {
 }
 
 const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const str = (v: any) => (v == null ? null : String(v));
 
-// ---------- GET /api/users/[id]
+/* ---------- GET /api/users/[id] */
 export async function GET(
     _req: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -33,7 +34,7 @@ export async function GET(
     return NextResponse.json(user);
 }
 
-// ---------- PUT /api/users/[id]
+/* ---------- PUT /api/users/[id] */
 export async function PUT(
     req: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -46,23 +47,27 @@ export async function PUT(
     // Pull coords from body (support both lat/lng and latitude/longitude)
     let bodyLat = num(b.lat ?? b.latitude);
     let bodyLng = num(b.lng ?? b.longitude);
-    const cascadeStops = !!b.cascadeStops;
+    const cascadeStopsFlag = !!b.cascadeStops;
 
-    // fetch current so we can detect address changes & existing geocode
+    // fetch current so we can detect changes
     const current = await prisma.user.findUnique({
         where: { id: userId },
         select: {
-            address: true, apt: true, city: true, state: true, zip: true,
+            address: true, apt: true, city: true, state: true, zip: true, phone: true,
             latitude: true, longitude: true, geocodedAt: true,
         },
     });
 
-    const addrChanged =
-        current?.address !== b.address ||
-        current?.apt     !== (b.apt ?? null) ||
-        current?.city    !== b.city ||
-        current?.state   !== b.state ||
-        current?.zip     !== (b.zip ?? null);
+    // Detect address/phone/coords changes
+    const addressChanged =
+        (str(current?.address) ?? "") !== (str(b.address) ?? "") ||
+        (str(current?.apt) ?? "")     !== (str(b.apt) ?? "") ||
+        (str(current?.city) ?? "")    !== (str(b.city) ?? "") ||
+        (str(current?.state) ?? "")   !== (str(b.state) ?? "") ||
+        (str(current?.zip) ?? "")     !== (str(b.zip) ?? "");
+
+    const phoneChanged =
+        (str(current?.phone) ?? "") !== (str(b.phone) ?? "");
 
     // Decide final coordinates:
     // 1) If client provided lat/lng, trust them.
@@ -74,10 +79,10 @@ export async function PUT(
         const { lat, lng } = await geocodeIfNeeded(
             {
                 address: b.address, apt: b.apt, city: b.city, state: b.state, zip: b.zip,
-                latitude: addrChanged ? null : (current?.latitude ?? null),
-                longitude: addrChanged ? null : (current?.longitude ?? null),
+                latitude: addressChanged ? null : (current?.latitude ?? null),
+                longitude: addressChanged ? null : (current?.longitude ?? null),
             },
-            addrChanged // force geocode when address changed
+            addressChanged // force geocode when address changed
         );
         finalLat = num(lat);
         finalLng = num(lng);
@@ -85,7 +90,7 @@ export async function PUT(
 
     // Determine geocodedAt: set to now when we first obtain coords or when address changed
     const shouldSetGeocodedAt =
-        addrChanged
+        addressChanged
             ? (finalLat != null && finalLng != null)
             : (current?.geocodedAt ? false : (finalLat != null && finalLng != null));
 
@@ -106,46 +111,56 @@ export async function PUT(
             paused: !!b.paused,
             complex: !!b.complex,
             schedule: {
-                upsert: {
-                    create: scheduleInput,
-                    update: scheduleInput,
-                },
+                upsert: { create: scheduleInput, update: scheduleInput },
             },
 
-            // ✅ Write coords to BOTH possible field names
+            // write coords to BOTH field name styles
             latitude: finalLat,
             longitude: finalLng,
             lat: finalLat,
             lng: finalLng,
 
-            // sensible geocodedAt handling
             geocodedAt: shouldSetGeocodedAt
                 ? new Date()
-                : (addrChanged ? null : current?.geocodedAt ?? null),
+                : (addressChanged ? null : current?.geocodedAt ?? null),
         },
         include: { schedule: true },
     });
-    console.log('updated');
 
-    // Optionally cascade the new geocode to all of the user's Stops
-    if (cascadeStops && finalLat != null && finalLng != null) {
-        await prisma.stop.updateMany({
-            where: { userId },
-            data: {
-                lat: finalLat,
-                lng: finalLng,
-                // If you also want to normalize city/state/zip on stops from body:
-                ...(b.city  ? { city: b.city }   : {}),
-                ...(b.state ? { state: b.state } : {}),
-                ...(b.zip   ? { zip: b.zip }     : {}),
-            },
-        });
+    // === Cascade denormalized fields to Stops when needed ===
+    // If any address/phone/coords changed OR explicit cascade flag is set,
+    // push fresh values into all of the user's stops so routes/search/labels see the latest.
+    const shouldCascade =
+        cascadeStopsFlag || addressChanged || phoneChanged || (finalLat != null && finalLng != null);
+
+    if (shouldCascade) {
+        const stopData: any = {};
+        if (b.address !== undefined) stopData.address = b.address ?? null;
+        if (b.apt     !== undefined) stopData.apt     = b.apt ?? null;
+        if (b.city    !== undefined) stopData.city    = b.city ?? null;
+        if (b.state   !== undefined) stopData.state   = b.state ?? null;
+        if (b.zip     !== undefined) stopData.zip     = b.zip ?? null;
+        if (b.phone   !== undefined) stopData.phone   = b.phone ?? null;
+        if (finalLat  != null)       stopData.lat     = finalLat;
+        if (finalLng  != null)       stopData.lng     = finalLng;
+
+        if (Object.keys(stopData).length > 0) {
+            try {
+                await prisma.stop.updateMany({
+                    where: { userId },
+                    data: stopData,
+                });
+            } catch (e: any) {
+                console.error("Cascade update to stops failed:", e?.message || e);
+                // don't fail the request — user update already succeeded
+            }
+        }
     }
 
     return NextResponse.json(updated);
 }
 
-// ---------- DELETE /api/users/[id]
+/* ---------- DELETE /api/users/[id] */
 export async function DELETE(
     _req: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -159,10 +174,7 @@ export async function DELETE(
             await tx.schedule.deleteMany({ where: { userId } }).catch(() => {});
 
             // 2) Find all stops for this user
-            const stops = await tx.stop.findMany({
-                where: { userId },
-                select: { id: true },
-            });
+            const stops = await tx.stop.findMany({ where: { userId }, select: { id: true } });
             const stopIds = stops.map((s) => s.id);
 
             // 3) Delete those stops
@@ -170,18 +182,12 @@ export async function DELETE(
                 await tx.stop.deleteMany({ where: { id: { in: stopIds } } });
             }
 
-            // 4) Remove those stop IDs from every driver’s stopIds array (JSONB-safe)
-            const drivers = await tx.driver.findMany({
-                select: { id: true, stopIds: true },
-            });
-
+            // 4) Remove those stop IDs from every driver’s stopIds array
+            const drivers = await tx.driver.findMany({ select: { id: true, stopIds: true } });
             for (const d of drivers) {
                 const filtered = (d.stopIds ?? []).filter((sid) => !stopIds.includes(sid));
                 if (filtered.length !== (d.stopIds?.length ?? 0)) {
-                    await tx.driver.update({
-                        where: { id: d.id },
-                        data: { stopIds: filtered },
-                    });
+                    await tx.driver.update({ where: { id: d.id }, data: { stopIds: filtered } });
                 }
             }
 

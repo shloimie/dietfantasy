@@ -1,12 +1,23 @@
+// app/api/route/generate/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "../../../../lib/prisma";
 import { planRoutesByAreaBalanced } from "../../../../utils/routing/areaBalance";
 
+/* ========= Config ========= */
+const PALETTE = [
+    "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
+    "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"
+];
 
+// HQ (for optional first-stop rotation)
+const ORIGIN = { lat: 41.14628538783947, lng: -73.98948195720195 };
+
+/* ========= Helpers ========= */
 type Body = { day?: string; driverCount?: number; useDietFantasyStart?: boolean };
-type DriverLite = { id: number; name: string; color: string; day?: string | null };
 
 function normalizeDay(raw?: string | null) {
     const s = String(raw ?? "all").toLowerCase().trim();
@@ -14,10 +25,8 @@ function normalizeDay(raw?: string | null) {
     return days.includes(s) ? s : "all";
 }
 
-const PALETTE = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
-
-// Diet Fantasy origin (miles calc below uses it for rotation)
-const ORIGIN = { lat: 41.14628538783947, lng: -73.98948195720195 };
+const s = (v: unknown) => (v == null ? "" : String(v));        // string (never null/undefined)
+const n = (v: unknown) => (typeof v === "number" ? v : null);   // nullable number (coords)
 
 function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const R = 3958.7613;
@@ -29,186 +38,227 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: 
     const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
-
 function rotateAtIndex<T>(arr: T[], idx: number) {
     if (!arr.length || idx <= 0) return arr.slice();
     return [...arr.slice(idx), ...arr.slice(0, idx)];
 }
 
+async function ensureDriver(name: string, color: string, day: string) {
+    const found = await prisma.driver.findFirst({ where: { name, day } });
+    if (found) return found;
+    return prisma.driver.create({
+        data: { name, color, day, stopIds: [] as unknown as Prisma.InputJsonValue },
+    });
+}
+
+/* ========= Handler ========= */
 export async function POST(req: Request) {
     try {
-        const body = (await req.json()) as Body;
-        const day = normalizeDay(body.day);
-        const k = Math.max(1, Math.min(20, body.driverCount ?? 6)); // ACTIVE drivers (excluding Driver 0)
+        const body = (await req.json().catch(() => ({}))) as Body;
+        const dayInput = normalizeDay(body.day);
+        const kActive = Math.max(1, Math.min(20, body.driverCount ?? 6));
         const useDietFantasyStart = body.useDietFantasyStart !== false; // default true
 
-        // 0) Pull geocoded stops for this day (or all)
-        const stops = await prisma.stop.findMany({
-            where: { ...(day === "all" ? {} : { day }) },
-            select: { id: true, lat: true, lng: true },
+        // Treat "all" as a concrete value in Stop.day (ENUM should include "all")
+        type StopData = Prisma.StopUncheckedCreateInput;
+        const dayValue = dayInput as StopData["day"];
+        const dayWhere = { day: dayValue }; // <-- ALWAYS scope by day, even for "all"
+
+        /* ---------- 0) Mirror latest Users -> Stops for THIS day ---------- */
+        const users = await prisma.user.findMany({
+            select: {
+                id: true, first: true, last: true,
+                address: true, apt: true, city: true, state: true, zip: true, phone: true,
+                paused: true, lat: true, lng: true,
+                schedule: {
+                    select: {
+                        monday: true, tuesday: true, wednesday: true, thursday: true,
+                        friday: true, saturday: true, sunday: true,
+                    }
+                }
+            },
             orderBy: { id: "asc" },
         });
 
-        const pts = stops
-            .filter((s) => s.lat != null && s.lng != null)
-            .map((s) => ({
-                id: s.id,
-                lat: typeof s.lat === "string" ? parseFloat(s.lat) : (s.lat as number),
-                lng: typeof s.lng === "string" ? parseFloat(s.lng) : (s.lng as number),
-            }))
-            .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+        const isOnDay = (u: any) => {
+            if (dayValue === "all") return true;
+            const sc = u?.schedule;
+            if (!sc) return true; // back-compat: treat missing schedule as on
+            return !!sc[dayValue as keyof typeof sc];
+        };
 
-        if (!pts.length) {
-            return NextResponse.json({
-                ok: true,
-                routes: [],
-                appliedStartRotation: false,
-                origin: ORIGIN,
-                message: "No geocoded stops.",
+        const activeUsers = users.filter(u => !u.paused && isOnDay(u));
+        const activeUserIds = new Set(activeUsers.map(u => u.id));
+
+        // Delete stops for THIS day whose user is no longer active-for-day
+        await prisma.stop.deleteMany({
+            where: {
+                ...dayWhere,
+                OR: [
+                    { userId: null },
+                    { userId: { notIn: Array.from(activeUserIds) } },
+                ],
+            },
+        });
+
+        // Existing stops for THIS day
+        const existing = await prisma.stop.findMany({
+            where: { ...dayWhere, userId: { in: Array.from(activeUserIds) } },
+            select: { id: true, userId: true },
+            orderBy: { id: "asc" },
+        });
+
+        // De-dup: keep one stop per (userId, day), delete extras
+        const seen = new Set<number>();
+        const extraIds: number[] = [];
+        for (const r of existing) {
+            if (r.userId == null) continue;
+            if (seen.has(r.userId)) extraIds.push(r.id);
+            else seen.add(r.userId);
+        }
+        if (extraIds.length) {
+            await prisma.stop.deleteMany({ where: { id: { in: extraIds } } });
+        }
+
+        // Re-read after de-dup
+        const existingAfter = await prisma.stop.findMany({
+            where: { ...dayWhere, userId: { in: Array.from(activeUserIds) } },
+            select: { id: true, userId: true },
+            orderBy: { id: "asc" },
+        });
+        const haveStop = new Set(existingAfter.map(x => x.userId!));
+
+        // Create missing (ALWAYS include all required fields, NEVER null for non-nullable)
+        const toCreate: StopData[] = activeUsers
+            .filter(u => !haveStop.has(u.id))
+            .map((u) => ({
+                day: dayValue,
+                userId: u.id,
+                name: s(`${u.first ?? ""} ${u.last ?? ""}`.trim()) || "(Unnamed)",
+                address: s(u.address),
+                apt: s(u.apt),
+                city: s(u.city),
+                state: s(u.state),
+                zip: s(u.zip),
+                phone: s(u.phone),
+                lat: n(u.lat),
+                lng: n(u.lng),
+            }));
+
+        if (toCreate.length) {
+            await prisma.stop.createMany({
+                data: toCreate,
+                skipDuplicates: true, // safe if you later add unique (userId, day)
             });
         }
 
-        // Quick lookup map
-        const idToPoint = new Map<number, { id:number; lat:number; lng:number }>(pts.map(p => [p.id, p]));
+        // Pull current snapshot for THIS day (after mirror)
+        const allStops = await prisma.stop.findMany({
+            where: { ...dayWhere },
+            select: { id: true, userId: true, lat: true, lng: true },
+            orderBy: { id: "asc" },
+        });
 
-        // 1) Build plan — returns: [ Driver0(outliers), route1..routeK ]
-        const plan = planRoutesByAreaBalanced(pts, k);
-        if (!Array.isArray(plan) || plan.length === 0) {
-            throw new Error("Planner returned no routes.");
-        }
+        const pausedByUser = new Map(users.map(u => [u.id, !!u.paused]));
 
-        // 1.5) NEW: absorb Driver 0 outliers into nearest active route so no one is “lost”
-        //      (Everything geocoded ends up on Driver 1..K.)
-        if (plan.length >= 2 && (plan[0]?.stopIds?.length ?? 0) > 0) {
-            // compute centers for active routes (fallback to average of member points)
-            const centers = plan.slice(1).map((r, idx) => {
-                if (r?.center && Number.isFinite(r.center.lat) && Number.isFinite(r.center.lng)) return r.center;
-                const ptsIn = (r?.stopIds ?? []).map((sid: number) => idToPoint.get(sid)).filter(Boolean) as {lat:number; lng:number}[];
-                if (!ptsIn.length) return { lat: ORIGIN.lat, lng: ORIGIN.lng };
-                const lat = ptsIn.reduce((a,p)=>a+p.lat,0)/ptsIn.length;
-                const lng = ptsIn.reduce((a,p)=>a+p.lng,0)/ptsIn.length;
-                return { lat, lng };
-            });
+        // Partition for planner
+        const eligibleGeoIds: number[] = [];   // geocoded + active
+        const ungeocodedIds: number[] = [];    // active but missing lat/lng
+        const pausedIds: number[] = [];        // paused (only for logging)
 
-            const transferIds: number[] = plan[0].stopIds ?? [];
-
-            for (const sid of transferIds) {
-                const p = idToPoint.get(sid);
-                if (!p) continue;
-                // choose nearest active center
-                let bestI = 0, bestD = Infinity;
-                for (let i = 0; i < centers.length; i++) {
-                    const d = haversineMiles(p, centers[i]);
-                    if (d < bestD) { bestD = d; bestI = i; }
-                }
-                const destIndexInPlan = bestI + 1; // because plan[1] is Driver 1, etc.
-                plan[destIndexInPlan].stopIds = (plan[destIndexInPlan].stopIds ?? []).concat([sid]);
-                plan[destIndexInPlan].count = (plan[destIndexInPlan].count ?? 0) + 1;
-            }
-
-            // clear Driver 0
-            plan[0].stopIds = [];
-            plan[0].count = 0;
-        }
-
-        // 2) Ensure Driver 0 + Drivers 1..k exist
-        const driverWhere = day === "all" ? {} : { day };
-
-        async function ensureDriver(name: string, color: string) {
-            const found = await prisma.driver.findFirst({ where: { name, ...(day === "all" ? {} : { day }) } });
-            if (found) return found;
-            return prisma.driver.create({
-                data: {
-                    name,
-                    color,
-                    ...(day === "all" ? { day: "all" } : { day }),
-                    stopIds: [] as unknown as Prisma.InputJsonValue,
-                },
-            });
-        }
-
-        const d0Full = await ensureDriver("Driver 0", "#666666");
-        const drivers: DriverLite[] = [{ id: d0Full.id, name: d0Full.name, color: d0Full.color, day: d0Full.day }];
-
-        for (let i = 1; i <= k; i++) {
-            const name = `Driver ${i}`;
-            const existing = await prisma.driver.findFirst({ where: { name, ...(day === "all" ? {} : { day }) } });
-            if (existing) {
-                drivers.push({ id: existing.id, name: existing.name, color: existing.color, day: existing.day });
+        for (const srow of allStops) {
+            const paused = srow.userId != null ? !!pausedByUser.get(srow.userId) : false;
+            const hasGeo = srow.lat != null && srow.lng != null;
+            if (paused) {
+                pausedIds.push(srow.id);
+            } else if (!hasGeo) {
+                ungeocodedIds.push(srow.id);
             } else {
-                const created = await prisma.driver.create({
-                    data: {
-                        name,
-                        color: PALETTE[(i - 1) % PALETTE.length],
-                        ...(day === "all" ? { day: "all" } : { day }),
-                        stopIds: [] as unknown as Prisma.InputJsonValue,
-                    },
-                });
-                drivers.push({ id: created.id, name: created.name, color: created.color, day: created.day });
+                eligibleGeoIds.push(srow.id);
             }
         }
 
-        // 3) Clear old assignments for this day
-        await prisma.stop.updateMany({
-            where: { ...(day === "all" ? {} : { day }) },
-            data: { assignedDriverId: null, order: null },
-        });
+        /* ---------- 1) Plan ONLY geocoded stops; DO NOT put ungeocoded on Driver 0 ---------- */
+        let plan = [{ driverIndex: 0, stopIds: [] as number[], count: 0 }];
+        if (eligibleGeoIds.length) {
+            const geoStops = await prisma.stop.findMany({
+                where: { id: { in: eligibleGeoIds } },
+                select: { id: true, lat: true, lng: true },
+                orderBy: { id: "asc" },
+            });
+            const pts = geoStops
+                .map((s) => ({
+                    id: s.id,
+                    lat: typeof s.lat === "string" ? parseFloat(s.lat) : (s.lat as number),
+                    lng: typeof s.lng === "string" ? parseFloat(s.lng) : (s.lng as number),
+                }))
+                .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
 
-        await prisma.driver.updateMany({
-            where: day === "all" ? {} : { day },
-            data: { stopIds: [] as unknown as Prisma.InputJsonValue },
-        });
+            plan = planRoutesByAreaBalanced(pts, kActive);
+            if (!Array.isArray(plan) || plan.length === 0) throw new Error("Planner returned no routes.");
+        }
 
-        // 4) Assign stops for ALL planned routes (including Driver 0 now empty)
-        for (let i = 0; i < plan.length; i++) {
-            const driverName = `Driver ${i}`;
-            const d = drivers.find((x) => x.name === driverName);
-            if (!d) continue;
+        // Planner’s outliers (geocoded but intentionally isolated)
+        const plannerD0Ids: number[] = (plan[0]?.stopIds ?? []).map(Number).filter(Number.isFinite);
 
-            const ids = (plan[i].stopIds ?? []).filter((v: any) => Number.isFinite(Number(v))).map((n: any) => Number(n));
+        /* ---------- 2) Ensure drivers for THIS day ---------- */
+        const d0 = await ensureDriver("Driver 0", "#666666", dayValue as string);
+        const actives = [];
+        for (let i = 1; i <= kActive; i++) {
+            actives.push(await ensureDriver(`Driver ${i}`, PALETTE[(i - 1) % PALETTE.length], dayValue as string));
+        }
 
-            if (ids.length > 0) {
+        /* ---------- 3) Clear assignments for THIS day ---------- */
+        await prisma.stop.updateMany({ where: { ...dayWhere }, data: { assignedDriverId: null, order: null } });
+        await prisma.driver.updateMany({ where: { day: dayValue as string }, data: { stopIds: [] as unknown as Prisma.InputJsonValue } });
+
+        /* ---------- 4) Assign ONLY the planned geocoded buckets ---------- */
+        let assignedActiveCount = 0;
+        for (let i = 1; i < plan.length; i++) {
+            const ids: number[] = (plan[i]?.stopIds ?? []).map(Number).filter(Number.isFinite);
+            const drv = actives[i - 1];
+            if (!drv) continue;
+
+            if (ids.length) {
                 await prisma.$transaction(
                     ids.map((stopId, idx) =>
                         prisma.stop.update({
                             where: { id: stopId },
-                            data: { assignedDriverId: d.id, order: idx + 1 },
+                            data: { assignedDriverId: drv.id, order: idx + 1 },
                         })
                     )
                 );
             }
-
             await prisma.driver.update({
-                where: { id: d.id },
+                where: { id: drv.id },
                 data: { stopIds: ids as unknown as Prisma.InputJsonValue },
             });
+            assignedActiveCount += ids.length;
         }
 
-        // 5) Remove any extra drivers beyond 0..k
-        const keepNames = new Set<string>(Array.from({ length: k + 1 }, (_, i) => `Driver ${i}`));
-        const present = await prisma.driver.findMany({ where: driverWhere, select: { id: true, name: true } });
-        const keepIds = new Set<number>(present.filter((d) => keepNames.has(d.name)).map((d) => d.id));
-
-        await prisma.driver.updateMany({
-            where: { ...(day === "all" ? {} : { day }), id: { notIn: Array.from(keepIds) } },
-            data: { stopIds: [] as unknown as Prisma.InputJsonValue },
+        /* ---------- 5) Assign ONLY planner outliers to Driver 0; leave ungeocoded UNASSIGNED ---------- */
+        if (plannerD0Ids.length) {
+            await prisma.stop.updateMany({
+                where: { id: { in: plannerD0Ids } },
+                data: { assignedDriverId: d0.id, order: null },
+            });
+        }
+        await prisma.driver.update({
+            where: { id: d0.id },
+            data: { stopIds: plannerD0Ids as unknown as Prisma.InputJsonValue },
         });
-        await prisma.driver.deleteMany({
-            where: { ...(day === "all" ? {} : { day }), id: { notIn: Array.from(keepIds) } },
-        });
 
-        // 6) Optional: rotate Driver 1..k so their first stop is nearest DF
+        /* ---------- 6) Optional: rotate active driver routes to start near HQ ---------- */
         if (useDietFantasyStart) {
-            for (let i = 1; i <= k; i++) {
-                const driverName = `Driver ${i}`;
-                const d = await prisma.driver.findFirst({
-                    where: { name: driverName, ...(day === "all" ? {} : { day }) },
+            for (const drv of actives) {
+                const rec = await prisma.driver.findUnique({
+                    where: { id: drv.id },
                     select: { id: true, stopIds: true },
                 });
-                if (!d) continue;
+                if (!rec) continue;
 
-                const ids: number[] = Array.isArray(d.stopIds)
-                    ? (d.stopIds as Array<number | string | null>)
+                const ids: number[] = Array.isArray(rec.stopIds)
+                    ? (rec.stopIds as Array<number | string | null>)
                         .map((v) => (v == null ? NaN : Number(v)))
                         .filter((n) => Number.isFinite(n)) as number[]
                     : [];
@@ -219,65 +269,77 @@ export async function POST(req: Request) {
                     where: { id: { in: ids } },
                     select: { id: true, lat: true, lng: true },
                 });
-
                 const byId = new Map(stopsForDriver.map((s) => [s.id, s]));
-                const ordered = ids.map((sid) => byId.get(sid)!).filter(Boolean);
 
                 let bestIdx = 0;
                 let bestDist = Number.POSITIVE_INFINITY;
-                ordered.forEach((s, idx) => {
-                    const lat = typeof s?.lat === "string" ? parseFloat(s.lat as any) : (s?.lat as number);
-                    const lng = typeof s?.lng === "string" ? parseFloat(s.lng as any) : (s?.lng as number);
+                ids.forEach((sid, idx) => {
+                    const p = byId.get(sid);
+                    const lat = typeof p?.lat === "string" ? parseFloat(p!.lat as any) : (p?.lat as number);
+                    const lng = typeof p?.lng === "string" ? parseFloat(p!.lng as any) : (p?.lng as number);
                     if (Number.isFinite(lat) && Number.isFinite(lng)) {
                         const dMi = haversineMiles(ORIGIN, { lat, lng });
                         if (dMi < bestDist) { bestDist = dMi; bestIdx = idx; }
                     }
                 });
 
-                const rotatedIds = rotateAtIndex(ids, bestIdx);
-
+                const rotated = rotateAtIndex(ids, bestIdx);
                 await prisma.$transaction(
-                    rotatedIds.map((sid, j) =>
-                        prisma.stop.update({
-                            where: { id: sid },
-                            data: { order: j + 1 },
-                        })
+                    rotated.map((sid, j) =>
+                        prisma.stop.update({ where: { id: sid }, data: { order: j + 1 } })
                     )
                 );
-
                 await prisma.driver.update({
-                    where: { id: d.id },
-                    data: { stopIds: rotatedIds as unknown as Prisma.InputJsonValue },
+                    where: { id: drv.id },
+                    data: { stopIds: rotated as unknown as Prisma.InputJsonValue },
                 });
             }
         }
 
-        // 7) Respond (with a helpful count summary)
-        const driversOut = await prisma.driver.findMany({
-            where: driverWhere,
-            orderBy: { id: "asc" }, // Driver 0 first
-            select: { id: true, name: true, color: true, stopIds: true, day: true },
+        /* ---------- 7) Remove any drivers beyond 0..kActive for THIS day ---------- */
+        const keepNames = new Set<string>(Array.from({ length: kActive + 1 }, (_, i) => `Driver ${i}`));
+        const present = await prisma.driver.findMany({
+            where: { day: dayValue as string },
+            select: { id: true, name: true },
         });
+        const keepIds = new Set<number>(present.filter((d) => keepNames.has(d.name)).map((d) => d.id));
 
-        const geocodedCount = pts.length;
-        const assignedCount = driversOut.reduce((sum, d) => sum + (Array.isArray(d.stopIds) ? d.stopIds.length : 0), 0);
+        await prisma.driver.updateMany({
+            where: { day: dayValue as string, id: { notIn: Array.from(keepIds) } },
+            data: { stopIds: [] as unknown as Prisma.InputJsonValue },
+        });
+        await prisma.driver.deleteMany({ where: { day: dayValue as string, id: { notIn: Array.from(keepIds) } } });
+
+        /* ---------- 8) Breakdown (no ungeocoded assigned anywhere) ---------- */
+        const totals = {
+            scopeDay: String(dayValue),
+            usersTotal: users.length,
+            usersActiveForDay: activeUsers.length,
+            totalStopsInScope: (await prisma.stop.count({ where: { ...dayWhere } })), // after mirror+dedupe
+            // routing buckets
+            eligibleGeo: eligibleGeoIds.length,
+            paused: pausedIds.length,
+            ungeocoded: ungeocodedIds.length,
+            plannerOutliersToD0: plannerD0Ids.length,
+            assignedActiveDrivers: assignedActiveCount,
+            assignedDriver0: plannerD0Ids.length,
+            totalAssigned: assignedActiveCount + plannerD0Ids.length,
+            leftoverUnassigned: allStops.length - (assignedActiveCount + plannerD0Ids.length), // these are exactly the ungeocoded now
+        };
+
+        // Extra detail: log example IDs for debugging
+        console.log("[/api/route/generate] Breakdown:", totals, {
+            sampleUngeocodedIds: ungeocodedIds.slice(0, 10),
+            samplePausedIds: pausedIds.slice(0, 10),
+            samplePlannerD0Ids: plannerD0Ids.slice(0, 10),
+        });
 
         return NextResponse.json({
             ok: true,
             appliedStartRotation: useDietFantasyStart,
             origin: ORIGIN,
-            routes: plan.map((r, i) => {
-                const drv = driversOut.find((d) => d.name === `Driver ${i}`);
-                return {
-                    driverId: drv?.id ?? null,
-                    driverName: drv?.name ?? `Driver ${i}`,
-                    color: drv?.color ?? (i === 0 ? "#666666" : PALETTE[(i - 1) % PALETTE.length]),
-                    count: Array.isArray(drv?.stopIds) ? (drv!.stopIds as any[]).length : 0,
-                    center: r.center,
-                    stopIds: drv?.stopIds ?? [],
-                };
-            }),
-            message: `Geocoded: ${geocodedCount}. Assigned to active drivers: ${assignedCount} (Driver 0 absorbed).`,
+            message: `Assigned ${totals.totalAssigned} geocoded stops (${totals.assignedActiveDrivers} active + ${totals.assignedDriver0} outliers). Ungeocoded kept unassigned: ${totals.ungeocoded}.`,
+            summary: totals,
         });
     } catch (e: any) {
         console.error("[/api/route/generate] Error:", e);
