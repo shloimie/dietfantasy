@@ -1,3 +1,4 @@
+// components/DriversMapLeaflet.jsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -9,6 +10,7 @@ import {
     useMap,
     CircleMarker,
     Polyline,
+    Pane, // NEW
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -37,15 +39,86 @@ const sid = (v) => {
         return "";
     }
 };
+
+// robust number coercion: number | string | Prisma.Decimal | object-with-toString()
 const toNum = (v) => {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return Number.isFinite(n) ? n : null;
+    if (v == null) return null;
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string") {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : null;
+    }
+    if (typeof v === "object") {
+        if (typeof v.toNumber === "function") {
+            const n = v.toNumber();
+            return Number.isFinite(n) ? n : null;
+        }
+        if (typeof v.valueOf === "function") {
+            const vv = v.valueOf();
+            if (typeof vv === "number" && Number.isFinite(vv)) return vv;
+            if (typeof vv === "string") {
+                const n = parseFloat(vv);
+                return Number.isFinite(n) ? n : null;
+            }
+        }
+        if (typeof v.toString === "function") {
+            const n = parseFloat(v.toString());
+            return Number.isFinite(n) ? n : null;
+        }
+    }
+    return null;
 };
+
+// pull coords from several common shapes (flat & nested)
 const getLL = (s) => {
-    const lat = toNum(s?.lat),
-        lng = toNum(s?.lng);
-    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+    if (!s) return null;
+
+    // flat
+    let lat = toNum(s?.lat ?? s?.latitude);
+    let lng = toNum(s?.lng ?? s?.longitude);
+
+    // nested: user.*, geo.*, location.*, coords.*, position.*
+    if (lat == null || lng == null) {
+        const srcs = [s.user, s.geo, s.location, s.coords, s.position];
+        for (const src of srcs) {
+            if (!src) continue;
+            if (lat == null) lat = toNum(src.lat ?? src.latitude);
+            if (lng == null) lng = toNum(src.lng ?? src.longitude);
+            if (lat != null && lng != null) break;
+        }
+    }
+
+    // defensive: ignore 0/0 and obvious junk
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (Math.abs(lat) < 0.00001 && Math.abs(lng) < 0.00001) return null;
+
+    return [lat, lng];
 };
+
+// Very small, stable offset (meters) to separate exact-overlap markers
+function jitterLL(ll, id) {
+    if (!ll) return null;
+    const [lat, lng] = ll;
+    const s = sid(id);
+    // simple FNV-like hash
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    // -0.5..0.5
+    const r1 = ((h & 1023) / 1023) - 0.5;
+    const r2 = (((h >>> 10) & 1023) / 1023) - 0.5;
+
+    const meters = 6; // small nudge; visually separates stacks
+    const dLat = (meters / 111320) * r1;
+    const dLng =
+        (meters /
+            (40075000 * Math.cos((lat * Math.PI) / 180) / 360)) * r2;
+
+    return [lat + dLat, lng + dLng];
+}
+
 const asLeafletMarker = (maybe) => {
     if (!maybe) return null;
     if (typeof maybe.getLatLng === "function") return maybe;
@@ -72,7 +145,6 @@ function truthyish(v) {
 
 /** Robust paused detector (common variants + strings) */
 function isPausedStop(s) {
-    // common boolean/flag fields across different payloads
     const flags = [
         s?.paused,
         s?.isPaused,
@@ -84,12 +156,10 @@ function isPausedStop(s) {
         s?.user?.paused,
         s?.user?.isPaused,
         s?.visit?.paused,
-        // timestamps often used to mark a hold
         (s?.pausedAt ?? s?.holdUntil ?? s?.onHoldUntil ?? null) ? true : false,
     ];
     if (flags.some(truthyish)) return true;
 
-    // status-like strings used by different backends
     const statusCandidates = [
         s?.status,
         s?.state,
@@ -98,7 +168,7 @@ function isPausedStop(s) {
         s?.visitStatus,
         s?.user?.status,
         s?.flags?.status,
-        s?.note, // sometimes "paused" appears in a note
+        s?.note,
         s?.pausedReason,
     ].map((x) => (x == null ? "" : String(x).toLowerCase()));
 
@@ -142,7 +212,7 @@ function makePinIcon(color = "#1f77b4", selected = false) {
       </svg>
       <div style="
         position:absolute;
-        left:${ANCHOR_X - 8}px;
+        left:${ANCHOR_X - 8};
         bottom:0;
         transform: translate3d(0,4px,0);
         width:16px; height:6px;
@@ -230,14 +300,12 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
     // Determine currently assigned driverId, if any
     const stopId = sid(stop.id);
     let currentDriverId = null;
-    // search drivers for this stop
     for (const d of drivers || []) {
         if ((d.stops || []).some((s) => sid(s.id) === stopId)) {
             currentDriverId = d.driverId;
             break;
         }
     }
-    // fallback to search result metadata (__driverId) if provided
     if (currentDriverId == null && stop.__driverId != null) {
         currentDriverId = stop.__driverId;
     }
@@ -260,16 +328,14 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
   `;
     const sel = container.querySelector("#__assignSel");
 
-    // Build options (sorted 0,1,2…)
     const sortedDrivers = [...(drivers || [])].sort(
         (a, b) => driverRankByName(a.name) - driverRankByName(b.name)
     );
 
-    // placeholder stays but won't be selected if we know current
     const o0 = document.createElement("option");
     o0.value = "";
     o0.textContent = "Select driver…";
-    o0.disabled = !!currentDriverId; // disabled if we have a current selection
+    o0.disabled = !!currentDriverId;
     o0.selected = !currentDriverId;
     sel.appendChild(o0);
 
@@ -280,7 +346,6 @@ function openAssignPopup({ map, stop, color, drivers, onAssign }) {
         sel.appendChild(o);
     }
 
-    // Preselect current driver
     if (currentDriverId != null) {
         sel.value = String(currentDriverId);
     }
@@ -909,7 +974,6 @@ export default function DriversMapLeaflet({
             } catch (err) {
                 console.error("[BulkAssign(sequential)] failed:", err);
             } finally {
-                // Clear selection & highlights
                 prevLiveSetRef.current.forEach((id) => setIconForId(id, false));
                 prevLiveSetRef.current = new Set();
                 setSelectedIds(new Set());
@@ -955,10 +1019,33 @@ export default function DriversMapLeaflet({
     const selectAllUnrouted = useCallback(() => {
         const ids = unroutedFiltered.filter(hasLL).map((s) => sid(s.id));
         setSelectedIds(new Set(ids));
-        // give a tiny visual ping by closing any open popup/halo
         clearHalo();
         mapRef.current?.closePopup();
     }, [unroutedFiltered, clearHalo]);
+
+    // SAFE visibility log (doesn't reference unroutedFiltered before it's declared)
+    useEffect(() => {
+        const has = (x) => !!getLL(x);
+
+        const assignedWithLL = sortedDrivers.reduce(
+            (sum, d) => sum + (d.stops || []).filter(has).length,
+            0
+        );
+        const assignedTotal = sortedDrivers.reduce(
+            (s, d) => s + (d.stops || []).length,
+            0
+        );
+
+        const unroutedAll = (localUnrouted || []).filter(
+            (s) => !assignedIdSet.has(sid(s.id))
+        );
+        const unroutedWithLL = unroutedAll.filter(has).length;
+        const unroutedTotal = unroutedAll.length;
+
+        console.log(
+            `[DriversMap] assigned: ${assignedWithLL}/${assignedTotal} | unrouted: ${unroutedWithLL}/${unroutedTotal}`
+        );
+    }, [sortedDrivers, localUnrouted, assignedIdSet]);
 
     return (
         <div style={{ height: "100%", width: "100%", position: "relative" }}>
@@ -993,7 +1080,6 @@ export default function DriversMapLeaflet({
                             placeholder="Search name, address, phone… (Enter selects first)"
                             onKeyDown={(e) => {
                                 if (e.key === "Enter" && results.length) {
-                                    // focus first result and auto-clear search
                                     focusResult(results[0], { clear: true });
                                 }
                             }}
@@ -1086,15 +1172,15 @@ export default function DriversMapLeaflet({
                                                     gap: 8,
                                                 }}
                                             >
-                        <span
-                            style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: 3,
-                                background: r.__color || "#999",
-                                border: "1px solid rgba(0,0,0,0.2)",
-                            }}
-                        />
+                                                <span
+                                                    style={{
+                                                        width: 12,
+                                                        height: 12,
+                                                        borderRadius: 3,
+                                                        background: r.__color || "#999",
+                                                        border: "1px solid rgba(0,0,0,0.2)",
+                                                    }}
+                                                />
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     <div
                                                         style={{
@@ -1255,7 +1341,6 @@ export default function DriversMapLeaflet({
                         gap: 8,
                     }}
                 >
-                    {/* NEW: header text */}
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>
                         Stops: {totalVisibleStops} &nbsp;
                     </div>
@@ -1319,15 +1404,15 @@ export default function DriversMapLeaflet({
                                     fontSize: 13,
                                 }}
                             >
-                <span
-                    style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 4,
-                        background: it.color,
-                        border: "1px solid rgba(0,0,0,0.15)",
-                    }}
-                />
+                                <span
+                                    style={{
+                                        width: 16,
+                                        height: 16,
+                                        borderRadius: 4,
+                                        background: it.color,
+                                        border: "1px solid rgba(0,0,0,0.15)",
+                                    }}
+                                />
                                 <div
                                     title={it.name}
                                     style={{
@@ -1384,6 +1469,9 @@ export default function DriversMapLeaflet({
                     />
                     <ZoomControl position="bottomleft" />
 
+                    {/* High-z pane to keep pins above everything */}
+                    <Pane name="pins" style={{ zIndex: 650 }} />
+
                     {/* halo */}
                     {Number.isFinite(selectedHalo.lat) && Number.isFinite(selectedHalo.lng) && (
                         <CircleMarker
@@ -1396,6 +1484,7 @@ export default function DriversMapLeaflet({
                             radius={18}
                             weight={3}
                             interactive={false}
+                            pane="pins"
                         />
                     )}
 
@@ -1422,10 +1511,13 @@ export default function DriversMapLeaflet({
                         const ll = getLL(s);
                         if (!ll) return null;
                         const id = sid(s.id);
+                        const pos = jitterLL(ll, id);
                         return (
                             <Marker
                                 key={`u-${id}`}
-                                position={ll}
+                                position={pos}
+                                pane="pins"
+                                zIndexOffset={2000}
                                 icon={makePinIcon("#666", selectedIds.has(id) || hoverIds.has(id))}
                                 ref={(ref) => {
                                     const m = asLeafletMarker(ref);
@@ -1439,16 +1531,20 @@ export default function DriversMapLeaflet({
                     })}
 
                     {/* ASSIGNED markers */}
-                    {sortedDrivers.map((d) =>
+                    {sortedDrivers.map((d, di) =>
                         (d.stops || []).map((s) => {
                             const ll = getLL(s);
                             if (!ll) return null;
                             const id = sid(s.id);
+                            const pos = jitterLL(ll, id);
                             const base = d.color || "#1f77b4";
+                            const z = 2100 + di; // slightly above unrouted, and stable order
                             return (
                                 <Marker
                                     key={`d-${sid(d.driverId)}-s-${id}`}
-                                    position={ll}
+                                    position={pos}
+                                    pane="pins"
+                                    zIndexOffset={z}
                                     icon={makePinIcon(base, selectedIds.has(id) || hoverIds.has(id))}
                                     ref={(ref) => {
                                         const m = asLeafletMarker(ref);
@@ -1461,6 +1557,27 @@ export default function DriversMapLeaflet({
                             );
                         })
                     )}
+
+                    {/* DEBUG dots (optional) — uncomment to sanity-check every point renders
+                    {sortedDrivers.map((d) =>
+                        (d.stops || []).map((s) => {
+                            const ll = getLL(s);
+                            if (!ll) return null;
+                            const id = sid(s.id);
+                            const pos = jitterLL(ll, id);
+                            return (
+                                <CircleMarker
+                                    key={`dbg-${id}`}
+                                    center={pos}
+                                    radius={2}
+                                    pathOptions={{ color: "#000", fillColor: "#000", fillOpacity: 0.35, opacity: 0.35 }}
+                                    interactive={false}
+                                    pane="pins"
+                                />
+                            );
+                        })
+                    )}
+                    */}
                 </MapContainer>
 
                 {/* Loading overlay (separate component) */}
