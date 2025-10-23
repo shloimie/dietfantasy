@@ -10,7 +10,7 @@ import {
     useMap,
     CircleMarker,
     Polyline,
-    Pane, // NEW
+    Pane,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -470,21 +470,49 @@ export default function DriversMapLeaflet({
         []
     );
 
+    /* ===== Driver filter (index click) ===== */
+    const [driverFilter, setDriverFilter] = useState(() => new Set());
+    const hasFilter = driverFilter.size > 0;
+
+    const toggleDriverFilter = useCallback((driverId) => {
+        setDriverFilter((prev) => {
+            const next = new Set(prev);
+            const idNum = Number(driverId);
+            if (next.has(idNum)) next.delete(idNum);
+            else next.add(idNum);
+            return next;
+        });
+    }, []);
+
+    const clearDriverFilter = useCallback(() => setDriverFilter(new Set()), []);
+
+    // Only show selected drivers when filtered; otherwise show all
+    const visibleDrivers = useMemo(
+        () =>
+            hasFilter
+                ? sortedDrivers.filter((d) => driverFilter.has(Number(d.driverId)))
+                : sortedDrivers,
+        [sortedDrivers, driverFilter, hasFilter]
+    );
+
     /* ------- derived ------- */
     const hasLL = (s) => !!getLL(s);
     const allPoints = useMemo(() => {
         const pts = [];
-        for (const d of sortedDrivers)
+        for (const d of visibleDrivers)
             for (const s of d.stops || []) {
                 const ll = getLL(s);
                 if (ll) pts.push(ll);
             }
-        for (const s of localUnrouted) {
-            const ll = getLL(s);
-            if (ll) pts.push(ll);
+        // hide unrouted when filtering by driver
+        if (!hasFilter) {
+            for (const s of localUnrouted) {
+                const ll = getLL(s);
+                if (ll) pts.push(ll);
+            }
         }
         return pts;
-    }, [sortedDrivers, localUnrouted]);
+    }, [visibleDrivers, localUnrouted, hasFilter]);
 
     const assignedIdSet = useMemo(() => {
         const set = new Set();
@@ -495,6 +523,12 @@ export default function DriversMapLeaflet({
     const unroutedFiltered = useMemo(
         () => (localUnrouted || []).filter((s) => !assignedIdSet.has(sid(s.id))),
         [localUnrouted, assignedIdSet]
+    );
+
+    // Only show unrouted when not filtering by driver
+    const unroutedFilteredVisible = useMemo(
+        () => (hasFilter ? [] : unroutedFiltered),
+        [hasFilter, unroutedFiltered]
     );
 
     const indexItems = useMemo(
@@ -508,30 +542,31 @@ export default function DriversMapLeaflet({
         [sortedDrivers]
     );
     const totalAssigned = useMemo(
-        () => indexItems.reduce((s, x) => s + x.count, 0),
-        [indexItems]
+        () =>
+            visibleDrivers.reduce((s, d) => s + (d.stops || []).filter(hasLL).length, 0),
+        [visibleDrivers]
     );
 
     // Header totals
     const unroutedVisible = useMemo(
-        () => unroutedFiltered.filter(hasLL).length,
-        [unroutedFiltered]
+        () => unroutedFilteredVisible.filter(hasLL).length,
+        [unroutedFilteredVisible]
     );
     const totalVisibleStops = totalAssigned + unroutedVisible;
 
     const pausedVisible = useMemo(() => {
         const detect = typeof pausedDetector === "function" ? pausedDetector : isPausedStop;
         let c = 0;
-        for (const d of sortedDrivers) {
+        for (const d of visibleDrivers) {
             for (const s of d.stops || []) {
                 if (hasLL(s) && detect(s)) c++;
             }
         }
-        for (const s of unroutedFiltered) {
+        for (const s of unroutedFilteredVisible) {
             if (hasLL(s) && detect(s)) c++;
         }
         return c;
-    }, [sortedDrivers, unroutedFiltered, pausedDetector]);
+    }, [visibleDrivers, unroutedFilteredVisible, pausedDetector]);
 
     const idBaseColor = useMemo(() => {
         const m = new Map();
@@ -1023,7 +1058,7 @@ export default function DriversMapLeaflet({
         mapRef.current?.closePopup();
     }, [unroutedFiltered, clearHalo]);
 
-    // SAFE visibility log (doesn't reference unroutedFiltered before it's declared)
+    // SAFE visibility log
     useEffect(() => {
         const has = (x) => !!getLL(x);
 
@@ -1342,7 +1377,7 @@ export default function DriversMapLeaflet({
                     }}
                 >
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                        Stops: {totalVisibleStops} &nbsp;
+                        Stops: {totalVisibleStops} &nbsp; • Paused: {pausedVisible}
                     </div>
 
                     <CheckRow
@@ -1367,12 +1402,49 @@ export default function DriversMapLeaflet({
                         title="When ON, clicking a dot toggles selection (no popup)"
                     />
 
+                    {/* Filter status row */}
+                    {hasFilter && (
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                fontSize: 12,
+                                background: "#f6fbff",
+                                border: "1px solid #cfe8ff",
+                                borderRadius: 8,
+                                padding: "6px 8px",
+                            }}
+                        >
+                            <div style={{ fontWeight: 700 }}>
+                                Filtering {driverFilter.size} driver{driverFilter.size > 1 ? "s" : ""}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={clearDriverFilter}
+                                style={{
+                                    marginLeft: "auto",
+                                    padding: "4px 8px",
+                                    borderRadius: 8,
+                                    border: "1px solid #cde",
+                                    background: "#fff",
+                                    cursor: "pointer",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                }}
+                                title="Show all drivers"
+                            >
+                                Clear filter
+                            </button>
+                        </div>
+                    )}
+
                     {/* Unrouted summary + NEW "Select all unrouted" */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ fontSize: 12, opacity: 0.8 }}>
                             Unrouted (visible): {unroutedVisible}
                         </div>
-                        {unroutedVisible > 0 && (
+                        {unroutedVisible > 0 && !hasFilter && (
                             <button
                                 type="button"
                                 onClick={selectAllUnrouted}
@@ -1393,48 +1465,64 @@ export default function DriversMapLeaflet({
                         )}
                     </div>
 
+                    {/* Clickable driver index */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {indexItems.map((it) => (
-                            <div
-                                key={it.driverId}
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    fontSize: 13,
-                                }}
-                            >
-                                <span
+                        {indexItems.map((it) => {
+                            const idNum = Number(it.driverId);
+                            const active = driverFilter.has(idNum);
+                            return (
+                                <button
+                                    key={it.driverId}
+                                    type="button"
+                                    onClick={() => toggleDriverFilter(it.driverId)}
+                                    title={active ? "Remove from filter" : "Show only this driver"}
                                     style={{
-                                        width: 16,
-                                        height: 16,
-                                        borderRadius: 4,
-                                        background: it.color,
-                                        border: "1px solid rgba(0,0,0,0.15)",
-                                    }}
-                                />
-                                <div
-                                    title={it.name}
-                                    style={{
-                                        flex: 1,
-                                        whiteSpace: "nowrap",
-                                        overflow: "hidden",
-                                        textOverflow: "ellipsis",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        fontSize: 13,
+                                        width: "100%",
+                                        textAlign: "left",
+                                        padding: "8px 10px",
+                                        borderRadius: 10,
+                                        border: active ? "1px solid #7db3ff" : "1px solid #ddd",
+                                        background: active ? "#eef5ff" : "#fff",
+                                        cursor: "pointer",
                                     }}
                                 >
-                                    {it.name}
-                                </div>
-                                <div
-                                    style={{
-                                        fontVariantNumeric: "tabular-nums",
-                                        opacity: 0.85,
-                                        paddingLeft: 6,
-                                    }}
-                                >
-                                    {it.count}
-                                </div>
-                            </div>
-                        ))}
+                                    <span
+                                        style={{
+                                            width: 16,
+                                            height: 16,
+                                            borderRadius: 4,
+                                            background: it.color,
+                                            border: "1px solid rgba(0,0,0,0.15)",
+                                        }}
+                                    />
+                                    <div
+                                        title={it.name}
+                                        style={{
+                                            flex: 1,
+                                            whiteSpace: "nowrap",
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            fontWeight: active ? 700 : 500,
+                                        }}
+                                    >
+                                        {it.name}
+                                    </div>
+                                    <div
+                                        style={{
+                                            fontVariantNumeric: "tabular-nums",
+                                            opacity: 0.85,
+                                            paddingLeft: 6,
+                                        }}
+                                    >
+                                        {it.count}
+                                    </div>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             </div>
@@ -1490,7 +1578,7 @@ export default function DriversMapLeaflet({
 
                     {/* route lines */}
                     {showRouteLines &&
-                        sortedDrivers.map((d) => {
+                        visibleDrivers.map((d) => {
                             const pts = (d.stops || []).map(getLL).filter(Boolean);
                             if (pts.length < 2) return null;
                             return (
@@ -1507,7 +1595,7 @@ export default function DriversMapLeaflet({
                         })}
 
                     {/* UNROUTED markers */}
-                    {unroutedFiltered.map((s) => {
+                    {unroutedFilteredVisible.map((s) => {
                         const ll = getLL(s);
                         if (!ll) return null;
                         const id = sid(s.id);
@@ -1531,7 +1619,7 @@ export default function DriversMapLeaflet({
                     })}
 
                     {/* ASSIGNED markers */}
-                    {sortedDrivers.map((d, di) =>
+                    {visibleDrivers.map((d, di) =>
                         (d.stops || []).map((s) => {
                             const ll = getLL(s);
                             if (!ll) return null;
@@ -1557,27 +1645,6 @@ export default function DriversMapLeaflet({
                             );
                         })
                     )}
-
-                    {/* DEBUG dots (optional) — uncomment to sanity-check every point renders
-                    {sortedDrivers.map((d) =>
-                        (d.stops || []).map((s) => {
-                            const ll = getLL(s);
-                            if (!ll) return null;
-                            const id = sid(s.id);
-                            const pos = jitterLL(ll, id);
-                            return (
-                                <CircleMarker
-                                    key={`dbg-${id}`}
-                                    center={pos}
-                                    radius={2}
-                                    pathOptions={{ color: "#000", fillColor: "#000", fillOpacity: 0.35, opacity: 0.35 }}
-                                    interactive={false}
-                                    pane="pins"
-                                />
-                            );
-                        })
-                    )}
-                    */}
                 </MapContainer>
 
                 {/* Loading overlay (separate component) */}
