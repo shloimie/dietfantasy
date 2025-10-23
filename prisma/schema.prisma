@@ -128,3 +128,18 @@ model Stop {
   @@index([day])
   @@map("Stop")
 }
+
+model RouteRun {
+  id        Int      @id @default(autoincrement())
+  day       String
+  createdAt DateTime @default(now())
+  /**
+   * Snapshot of the drivers for this route run.
+   * Shape: Array<{ name: string; color: string; stopIds: Int[] }>
+   * (Driver 0 included if present)
+   */
+  snapshot  Json
+
+  @@index([day, createdAt(sort: Desc)])
+  @@map("RouteRun")
+}

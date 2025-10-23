@@ -355,6 +355,50 @@ export async function POST(req: Request) {
             samplePlannerD0Ids: plannerD0Ids.slice(0, 10),
         });
 
+        /* ---------- 9) Save snapshot as a RouteRun, keep only last 10 ---------- */
+        try {
+            // Build snapshot of ALL drivers for this day after assignments (including Driver 0)
+            const driversForDay = await prisma.driver.findMany({
+                where: { day: dayValue as string },
+                select: { name: true, color: true, stopIds: true },
+                orderBy: { id: "asc" },
+            });
+
+            const snapshot = (driversForDay || []).map(d => ({
+                name: d.name,
+                color: d.color,
+                stopIds: Array.isArray(d.stopIds)
+                    ? (d.stopIds as Array<number | string | null>)
+                        .map(v => (v == null ? NaN : Number(v)))
+                        .filter(n => Number.isFinite(n)) as number[]
+                    : [],
+            }));
+
+            // Create a new RouteRun row
+            const created = await prisma.routeRun.create({
+                data: {
+                    day: String(dayValue),
+                    snapshot: snapshot as unknown as Prisma.InputJsonValue,
+                },
+                select: { id: true, createdAt: true },
+            });
+
+            // Prune: keep latest 10 for this day
+            const toPrune = await prisma.routeRun.findMany({
+                where: { day: String(dayValue) },
+                orderBy: { createdAt: "desc" },
+                skip: 10, // leave the first 10 newest
+                select: { id: true },
+            });
+            if (toPrune.length) {
+                await prisma.routeRun.deleteMany({ where: { id: { in: toPrune.map(r => r.id) } } });
+            }
+
+            console.log("[/api/route/generate] snapshot saved RouteRun.id =", created.id);
+        } catch (snapErr) {
+            console.warn("[/api/route/generate] snapshot save failed:", snapErr);
+        }
+
         return NextResponse.json({
             ok: true,
             appliedStartRotation: useDietFantasyStart,

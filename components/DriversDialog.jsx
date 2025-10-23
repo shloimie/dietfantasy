@@ -3,33 +3,23 @@
 import * as React from "react";
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, Box, Typography, LinearProgress
+    Button, Box, Typography
 } from "@mui/material";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: false });
 
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
-// ⬇️ Restore the original labels renderer so names & tiny numbers render as before
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
+
+// NEW: MUI pieces for the dropdown
+import { FormControl, InputLabel, MenuItem, Select } from "@mui/material";
 
 /* =================== helpers / palette =================== */
 const palette = [
-    "#1f77b4", // deep blue
-    "#ff7f0e", // orange
-    "#2ca02c", // green
-    "#d62728", // red
-    "#9467bd", // purple
-    "#8c564b", // brown
-    "#e377c2", // pink
-    "#17becf", // cyan
-    "#bcbd22", // olive
-    "#393b79", // indigo blue
-    "#ad494a", // muted brick red
-    "#637939", // olive green
-    "#ce6dbd", // lavender-magenta
-    "#8c6d31", // dark mustard
-    "#7f7f7f", // mid gray-brown (neutral contrast)
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#17becf", "#bcbd22", "#393b79",
+    "#ad494a", "#637939", "#ce6dbd", "#8c6d31", "#7f7f7f",
 ];
 
 const nameOf = (u = {}) => {
@@ -51,8 +41,7 @@ const toBool = (v) => {
 };
 const displayNameLoose = (u = {}) => {
     const cands = [
-        u.name,
-        u.fullName,
+        u.name, u.fullName,
         `${u.first ?? ""} ${u.last ?? ""}`.trim(),
         `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
         u?.user?.name,
@@ -167,6 +156,10 @@ export default function DriversDialog({
     const [mapOpen, setMapOpen] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
 
+    // NEW: last runs
+    const [runs, setRuns] = React.useState([]); // [{id, createdAtISO}]
+    const [selectedRunId, setSelectedRunId] = React.useState("");
+
     // Map API reference (set once via onExpose)
     const mapApiRef = React.useRef(null);
 
@@ -193,13 +186,26 @@ export default function DriversDialog({
         }
     }, [selectedDay]);
 
+    // NEW: fetch last 10 runs
+    const fetchRuns = React.useCallback(async () => {
+        try {
+            const res = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
+            const data = await res.json();
+            setRuns(Array.isArray(data.runs) ? data.runs : []);
+        } catch (e) {
+            console.error("Failed to load runs:", e);
+            setRuns([]);
+        }
+    }, [selectedDay]);
+
     React.useEffect(() => {
         if (!open) return;
         const missing = users.filter(u => (u.lat ?? u.latitude) == null || (u.lng ?? u.longitude) == null);
         setMissingBatch(missing);
         setMapOpen(true);
         loadRoutes();
-    }, [open, users, loadRoutes]);
+        fetchRuns(); // NEW
+    }, [open, users, loadRoutes, fetchRuns]);
 
     async function handleManualGeocoded(updates) {
         try {
@@ -270,11 +276,9 @@ export default function DriversDialog({
     // Map-facing drivers (kept in sync with dialog routes)
     const mapDrivers = React.useMemo(() => {
         return (routes || []).map((r, i) => {
-            // make sure we always have a numeric, unique driverId
             const driverId = Number(r.driverId ?? r.id);
             const color = r.color || palette[i % palette.length];
             const dname = r.driverName || r.name || `Driver ${i}`;
-
             const stops = (r.stops || [])
                 .map((u, idx) => ({
                     id: u.id,
@@ -287,14 +291,11 @@ export default function DriversDialog({
                     zip: u.zip ?? "",
                     lat: Number(u.lat),
                     lng: Number(u.lng),
-
-                    // IMPORTANT: tag the stop with the numeric owner driver id
                     __driverId: driverId,
                     __driverName: dname,
                     __stopIndex: idx,
                 }))
                 .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
-
             return { id: String(driverId), driverId, name: dname, color, polygon: [], stops };
         });
     }, [routes]);
@@ -311,6 +312,22 @@ export default function DriversDialog({
         const ampm = h >= 12 ? "PM" : "AM";
         h = h % 12 || 12;
         return `${mm}-${dd} ${h}:${String(m).padStart(2, "0")}${ampm}`;
+    }
+
+    // NEW: format ISO -> "M/D h:mma"
+    function fmt(iso) {
+        try {
+            const d = new Date(iso);
+            const mo = d.getMonth() + 1;
+            const da = d.getDate();
+            let h = d.getHours();
+            const m = String(d.getMinutes()).padStart(2, "0");
+            const ampm = h >= 12 ? "PM" : "AM";
+            h = h % 12 || 12;
+            return `${mo}/${da} ${h}:${m}${ampm}`;
+        } catch {
+            return iso || "";
+        }
     }
 
     async function regenerateRoutes() {
@@ -330,6 +347,8 @@ export default function DriversDialog({
             });
             if (!res.ok) throw new Error(await res.text());
             await loadRoutes();
+            await fetchRuns(); // NEW: refresh dropdown (prunes beyond 10 automatically)
+            setSelectedRunId(""); // clear selection after new gen
         } catch (e) {
             console.error(e); alert("Failed to regenerate.");
         } finally {
@@ -382,51 +401,56 @@ export default function DriversDialog({
         }
     }
 
-    // ===== Sort routes so Driver 0 is first; propagate numbers to stops for PDF =====
-// ===== Sort routes so Driver 0 is first; propagate numbers & names to stops for PDF =====
-    const parseDriverNum = (name) => {
-        const m = /driver\s+(\d+)/i.exec(String(name || ""));
-        return m ? parseInt(m[1], 10) : null;
-    };
-    const rankForRoute = (route, idxFallback = 0) => {
-        const n = parseDriverNum(route?.driverName || route?.name);
-        return Number.isFinite(n) ? n : idxFallback;
-    };
-
+    // ===== PDF helpers (unchanged but referenced) =====
     const buildSortedForLabels = React.useCallback(() => {
-        // Build sortable meta
         const meta = (routes || []).map((r, i) => ({
             i,
-            num: rankForRoute(r, i),                 // numeric driver rank if present
+            num: rankForRoute(r, i),
             color: r?.color,
             name: r?.driverName || r?.name || `Driver ${i}`,
         }));
-
-        // Sort: Driver 0, 1, 2 … (fallback to index when missing)
         meta.sort((a, b) => {
             const aa = Number.isFinite(a.num) ? a.num : a.i;
             const bb = Number.isFinite(b.num) ? b.num : b.i;
             return aa - bb || a.i - b.i;
         });
-
-        // Colors in sorted order (fallback palette)
         const colorsSorted = meta.map((m, idx) => m.color || driverColors[m.i] || palette[idx % palette.length]);
-
-        // Stamp zero-based driver number AND explicit "Driver X" name on each stop
         const enrichedSorted = meta.map((m, newIdx) => {
-            const driverNum = Number.isFinite(m.num) ? m.num : newIdx; // zero-based
+            const driverNum = Number.isFinite(m.num) ? m.num : newIdx;
             const driverName = `Driver ${driverNum}`;
             const arr = (routeStops[m.i] || []);
             return arr.map((s, si) => ({
                 ...s,
-                __driverNumber: driverNum,          // 0-based; if the PDF does (+1), you still get 0 -> 1 only if they add; we override name too
-                __driverName: driverName,           // force exact label text “Driver 0/1/…”
-                __stopIndex: si,                    // 0-based stop index (PDF usually renders 1-based for readability)
+                __driverNumber: driverNum,
+                __driverName: driverName,
+                __stopIndex: si,
             }));
         });
-
         return { enrichedSorted, colorsSorted };
     }, [routes, routeStops, driverColors]);
+
+    // NEW: apply a selected run
+    async function applyRun(id) {
+        if (!id) return;
+        const ok = window.confirm("Apply this saved route? This will overwrite current assignments.");
+        if (!ok) return;
+        try {
+            setBusy(true);
+            const res = await fetch("/api/route/apply-run", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ runId: Number(id) }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            await loadRoutes();
+        } catch (e) {
+            console.error(e);
+            alert("Failed to apply route.");
+        } finally {
+            setBusy(false);
+        }
+    }
+
     return (
         <>
             <ManualGeocodeDialog
@@ -452,8 +476,35 @@ export default function DriversDialog({
                             gap: 1,
                         }}
                     >
-                        <Box sx={{ justifySelf: "start", fontWeight: 600 }}>Routes Map</Box>
+                        {/* LEFT: Title + history dropdown */}
+                        <Box sx={{ justifySelf: "start", fontWeight: 600, display: "flex", alignItems: "center", gap: 1 }}>
+                            <span>Routes Map</span>
 
+                            {/* NEW: Last 10 Runs dropdown */}
+                            <FormControl size="small" sx={{ minWidth: 220 }}>
+                                <InputLabel id="route-run-label">Last 10 Routes</InputLabel>
+                                <Select
+                                    labelId="route-run-label"
+                                    label="Last 10 Routes"
+                                    value={selectedRunId}
+                                    onChange={(e) => {
+                                        const id = String(e.target.value || "");
+                                        setSelectedRunId(id);
+                                        if (id) applyRun(id);
+                                    }}
+                                    disabled={busy || runs.length === 0}
+                                >
+                                    {runs.map(r => (
+                                        <MenuItem key={r.id} value={String(r.id)}>
+                                            {fmt(r.createdAt)}
+                                        </MenuItem>
+                                    ))}
+                                    {runs.length === 0 && <MenuItem value="" disabled>(No history)</MenuItem>}
+                                </Select>
+                            </FormControl>
+                        </Box>
+
+                        {/* CENTER: generate */}
                         <Button
                             onClick={regenerateRoutes}
                             variant="contained"
@@ -464,6 +515,7 @@ export default function DriversDialog({
                             Generate New Route
                         </Button>
 
+                        {/* RIGHT: link */}
                         <Box sx={{ justifySelf: "end" }}>
                             <Link
                                 href="/drivers"
@@ -491,23 +543,6 @@ export default function DriversDialog({
                             initialCenter={[40.7128, -74.006]}
                             initialZoom={5}
                         />
-
-                        {/*{busy && (*/}
-                        {/*    <Box*/}
-                        {/*        sx={{*/}
-                        {/*            position: "absolute", inset: 0, display: "flex",*/}
-                        {/*            alignItems: "flex-start", justifyContent: "center",*/}
-                        {/*            pointerEvents: "none", background: "rgba(255,255,255,0.35)"*/}
-                        {/*        }}*/}
-                        {/*    >*/}
-                        {/*        <Box sx={{ mt: 2 }}>*/}
-                        {/*            <LinearProgress sx={{ width: 260 }} />*/}
-                        {/*            <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 0.5, opacity: 0.8 }}>*/}
-                        {/*                Loading…*/}
-                        {/*            </Typography>*/}
-                        {/*        </Box>*/}
-                        {/*    </Box>*/}
-                        {/*)}*/}
                     </Box>
                 </DialogContent>
 
@@ -521,32 +556,23 @@ export default function DriversDialog({
                         </Typography>
                     )}
 
-                    {/* Download Labels — use pdfRouteLabels with sorted order & stamped numbers */}
                     <Button
                         onClick={async () => {
                             setBusy(true);
                             try {
-                                // 1) Mark complex flags on the original stops (keeps names/phones intact)
                                 const idxs = buildComplexIndex(users);
                                 const complexMarked = (routeStops || []).map((stops) =>
                                     (stops || []).map((s, si) => markStopComplex(s, si, idxs))
                                 );
-
-                                // 2) Sort routes so Driver 0 is first and stamp driverNumber/driverName/stopIndex
                                 const { enrichedSorted, colorsSorted } = buildSortedForLabels();
-
-                                // 3) Merge complex flags back into the stamped objects by stop id
                                 const complexById = new Map();
                                 complexMarked.forEach(route => route.forEach(s => complexById.set(String(s.id), s)));
-
                                 const stampedWithComplex = enrichedSorted.map(route =>
                                     route.map(s => {
                                         const cm = complexById.get(String(s.id));
                                         return cm ? { ...s, complex: cm.complex, __complexSource: cm.__complexSource } : s;
                                     })
                                 );
-
-                                // 4) Render with the original pdfRouteLabels (names + tiny numbers preserved)
                                 await exportRouteLabelsPDF(stampedWithComplex, colorsSorted, tsString);
                             } finally {
                                 setBusy(false);
