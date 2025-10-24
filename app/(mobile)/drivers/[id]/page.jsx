@@ -1,4 +1,3 @@
-// app/(mobile)/drivers/[id]/page.jsx
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
@@ -15,11 +14,32 @@ import SearchStops from "../../../../components/SearchStops";
 /** Lazy-load the shared Leaflet map */
 const DriversMapLeaflet = dynamic(() => import("../../../../components/DriversMapLeaflet"), { ssr: false });
 
-/** Always fetch fresh signature counts */
+/* =========================================================================
+   60s CLIENT CACHE (per-driver): driver, stops, signatures
+   ========================================================================= */
+const _cache = {
+    dataByDriver: new Map(), // id -> { driver, every, sigRows, at: ms }
+    get(id) {
+        const row = this.dataByDriver.get(String(id));
+        if (!row) return null;
+        if (Date.now() - row.at > 60_000) return null; // expired
+        return row;
+    },
+    set(id, payload) {
+        this.dataByDriver.set(String(id), { ...payload, at: Date.now() });
+    },
+    clear(id) {
+        if (id == null) this.dataByDriver.clear();
+        else this.dataByDriver.delete(String(id));
+    },
+};
+
+/** Fetch signature status (cached via the page's cache wrapper) */
 async function fetchSignStatus() {
     const res = await fetch("/api/signatures/status", {
-        cache: "no-store",
-        headers: { "cache-control": "no-store" },
+        // still allow browser/proxy caching for up to 60s
+        cache: "force-cache",
+        headers: { "cache-control": "max-age=60" },
     });
     if (!res.ok) throw new Error("signatures/status failed");
     return res.json(); // [{ userId, collected }]
@@ -95,20 +115,30 @@ export default function DriverDetailPage() {
         return res.json();
     }
 
-    /** Centralized reload that uses ONLY server truth */
-    const loadData = useCallback(async () => {
+    /** Centralized reload (with 60s cache). Pass force=true to bypass cache. */
+    const loadData = useCallback(async (force = false) => {
         setLoading(true);
 
-        // 1) Driver (provides stopIds + meta)
-        const d = await fetchDriver(id);
+        // try cache first
+        let cached = !force ? _cache.get(id) : null;
 
-        // 2) Stops for this driver from your API (server truth)
-        const every = await fetchStops();
+        if (!cached) {
+            // 1) Driver
+            const d = await fetchDriver(id);
 
-        // 3) Signature counts
-        const sigRows = await fetchSignStatus();
+            // 2) All stops (server truth)
+            const every = await fetchStops();
 
-        // 4) Order by driver's stopIds and attach sigs
+            // 3) Signature counts
+            const sigRows = await fetchSignStatus();
+
+            cached = { driver: d, every, sigRows };
+            _cache.set(id, cached);
+        }
+
+        const { driver: d, every, sigRows } = cached;
+
+        // 4) Order and attach sigs
         const orderedServer = orderByDriverStopIds(d, every);
         const orderedWithSigs = mergeSigCounts(orderedServer, sigRows);
         const allWithSigs = mergeSigCounts(every, sigRows);
@@ -141,8 +171,13 @@ export default function DriverDetailPage() {
         return () => { active = false; };
     }, [loadData]);
 
+    /* ================== Progress counts ================== */
     const doneCount = useMemo(() => stops.filter((s) => !!s.completed).length, [stops]);
-    const pct = stops.length ? (doneCount / stops.length) * 100 : 0;
+    const pctDone = stops.length ? (doneCount / stops.length) * 100 : 0;
+
+    // A "signature complete user" = sigCollected >= 5
+    const sigUsersDone = useMemo(() => stops.filter((s) => Number(s.sigCollected ?? 0) >= 5).length, [stops]);
+    const pctSigs = stops.length ? (sigUsersDone / stops.length) * 100 : 0;
 
     const reverseRoute = async () => {
         if (reversing) return;
@@ -150,7 +185,8 @@ export default function DriverDetailPage() {
         try {
             const r = await reverseOnServer(id);
             if (!r?.ok) console.error("Reverse failed:", r?.error);
-            await loadData(); // refresh from server after reversal
+            _cache.clear(id);         // invalidate
+            await loadData(true);     // force fresh
         } finally {
             setReversing(false);
         }
@@ -162,7 +198,8 @@ export default function DriverDetailPage() {
         setSheetUrl("");
         setSheetDebug("");
         try {
-            await loadData(); // pick up any new signatures
+            _cache.clear(id);       // ensure fresh sig counts after collection
+            await loadData(true);
         } catch {}
     };
 
@@ -323,7 +360,7 @@ export default function DriverDetailPage() {
 
     return (
         <div className="container theme" style={{ ["--brand"]: driver.color || "#3665F3" }}>
-            {/* Sticky mobile header — restored */}
+            {/* Sticky mobile header */}
             <header className="sticky-header">
                 <button className="icon-back" onClick={() => router.push("/drivers")} aria-label="Back to routes">
                     <ArrowLeft />
@@ -333,11 +370,18 @@ export default function DriverDetailPage() {
                         <div className="hdr-pill"><Hash /></div>
                         <div className="hdr-txt"><div className="title">Route {driver.name}</div></div>
                     </div>
-                    <div className="progress small"><span style={{ width: `${pct}%` }} /></div>
+
+                    {/* Progress #1: Completed stops */}
+                    <div className="progress small"><span style={{ width: `${pctDone}%` }} /></div>
+
+                    {/* Progress #2: Signature-complete users */}
+                    <div className="progress small sig"><span style={{ width: `${pctSigs}%` }} /></div>
                 </div>
                 <div className="hdr-count">
                     <div className="strong">{doneCount}/{stops.length}</div>
                     <div className="muted tiny">Done</div>
+                    <div className="strong sig-ct">{sigUsersDone}/{stops.length}</div>
+                    <div className="muted tiny">Sigs</div>
                 </div>
             </header>
 
@@ -361,12 +405,15 @@ export default function DriverDetailPage() {
                         <div style={{ textAlign: "right" }}>
                             <div className="xxl">{doneCount}/{stops.length}</div>
                             <div className="muted white">Completed</div>
+                            <div className="xxl" style={{ marginTop: 6 }}>{sigUsersDone}/{stops.length}</div>
+                            <div className="muted white">Signatures</div>
                         </div>
                     </div>
 
                     <div className="banner-progress">
                         <div className="muted white mb8">Progress</div>
-                        <div className="progress"><span style={{ width: `${pct}%`, background: "#fff" }} /></div>
+                        <div className="progress"><span style={{ width: `${pctDone}%`, background: "#fff" }} /></div>
+                        <div className="progress sig" style={{ marginTop: 8 }}><span style={{ width: `${pctSigs}%`, background: "#fff" }} /></div>
                     </div>
                 </div>
             </div>
@@ -525,6 +572,7 @@ export default function DriverDetailPage() {
                                                     const res = await setStopCompleted(s.userId, s.id, true);
                                                     if (res?.ok && res?.stop?.completed) {
                                                         setStops(prev => prev.map(x => (x.id === s.id ? { ...x, completed: true } : x)));
+                                                        _cache.clear(id); // ensure next load is accurate
                                                     } else {
                                                         console.error("setStopCompleted failed", res);
                                                     }
@@ -616,6 +664,7 @@ export default function DriverDetailPage() {
   --bg:#f7f8fb; --border:#e8eaef; --muted:#6b7280; --radius:14px;
   --shadow:0 6px 18px rgba(16,24,40,.06), 0 1px 6px rgba(16,24,40,.05);
   --success:#16a34a; --tap: rgba(0,0,0,.06);
+  --sigbar:#0ea5e9;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:#111;
@@ -632,11 +681,14 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .hdr-top{display:flex; align-items:center; gap:10px}
 .hdr-pill{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#e7eefc;color:var(--brand);box-shadow:inset 0 0 0 1px rgba(39,72,216,.12)}
 .hdr-txt .title{font-weight:800; font-size:16px; line-height:1.1}
-.hdr-count{min-width:60px; text-align:right}
+.hdr-count{min-width:64px; text-align:right}
+.hdr-count .strong{font-weight:800}
+.hdr-count .sig-ct{margin-top:4px}
 .tiny{font-size:11px}
-.progress{width:100%;height:8px;border-radius:999px;background:#f1f5f9;overflow:hidden}
-.progress.small{height:6px}
+.progress{width:100%;height:6px;border-radius:999px;background:#f1f5f9;overflow:hidden;margin-top:6px}
 .progress>span{display:block;height:100%;border-radius:999px;background:var(--brand);transition:width .25s ease}
+.progress.sig{background:#eef6fb}
+.progress.sig>span{background:var(--sigbar)}
 
 .desktop-only{display:none}
 @media (min-width: 780px){
@@ -659,6 +711,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .white{color:#fff}
 .mb8{margin-bottom:8px}
 .banner-progress{margin-top:16px;background:rgba(255,255,255,.15);border-radius:12px;padding:16px}
+.banner-progress .progress{height:8px}
+.banner-progress .progress + .progress{margin-top:10px}
 
 .pill{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;
   background:#fff;color:var(--brand);border:2px solid var(--brand);font-weight:700;font-size:14px;flex-shrink:0}
