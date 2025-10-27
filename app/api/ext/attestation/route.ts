@@ -27,25 +27,25 @@ type Stroke = Pt[];
 type Signature = Stroke[]; // full signature = array of strokes
 
 type Body = {
-    name?: string;    // "Jane Doe" or "Jane"
-    phone?: string;   // digits, any formatting accepted
-    address?: string; // any substring: street/city/zip
-    date?: string;    // MM/DD/YYYY preferred (falls back to today)
+    name?: string;       // "Jane Doe"
+    phone?: string;      // any formatting ok
+    address?: string;    // street/city/zip fragment
+    deliveryDate?: string; // "MM/DD/YYYY" (the day they received)
+    startDate?: string;    // "MM/DD/YYYY" (period start)
+    endDate?: string;      // "MM/DD/YYYY" (period end)
 };
 
-// --- Utilities copied/adapted from your viewer page ---
-function todayString() {
+// --- Utilities ---
+function todayMDY() {
     const d = new Date();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     const yyyy = d.getFullYear();
     return `${mm}/${dd}/${yyyy}`;
 }
-
 function cleanDigits(s?: string | null) {
     return String(s ?? "").replace(/\D+/g, "");
 }
-
 function normalize(s?: string | null) {
     return String(s ?? "").trim();
 }
@@ -61,7 +61,6 @@ function drawLabelValueBold(opts: {
     page.drawText(value || "—", { x: x + labelW, y, size, font: bold });
 }
 
-// Cap-height aligned checkbox + text (same look as your viewer)
 function drawCheckedBox(page: any, x: number, yBaseline: number, size: number) {
     const cap = size * 0.70;
     const box = Math.max(10, Math.round(size * 0.90));
@@ -106,10 +105,7 @@ async function readLocalLogoBytes(): Promise<Uint8Array | null> {
     }
 }
 
-// Render signature strokes directly into the PDF (vector lines)
-// Assumes original stroke coords were ~600x160 (your canvas). Scales to a target box.
-// Render signature strokes directly into the PDF (vector lines)
-// Flips Y because HTML canvas Y grows down, PDF Y grows up.
+// Render signature strokes (vector)
 function drawSignatureStrokes(
     page: any,
     strokes: Signature,
@@ -117,7 +113,6 @@ function drawSignatureStrokes(
 ) {
     const { x, y, w, h } = opts;
 
-    // Original capture canvas size
     const CANVAS_W = 600;
     const CANVAS_H = 160;
 
@@ -130,7 +125,6 @@ function drawSignatureStrokes(
             const p0 = s[i - 1];
             const p1 = s[i];
 
-            // X maps directly; Y is flipped within the box: bottom = y; top = y + h
             const x0 = x + p0.x * sx;
             const y0 = y + (h - p0.y * sy);
             const x1 = x + p1.x * sx;
@@ -145,13 +139,8 @@ function drawSignatureStrokes(
         }
     }
 }
+
 // --- Progressive narrowing search ---
-// Strategy:
-// 1) If name provided: try by name. If exactly one -> winner.
-//    If multiple and phone present, narrow by phone. If still multiple and address present, narrow by address.
-//    If still multiple -> 409 with choices.
-// 2) Else if phone provided: find by phone, then narrow by address.
-// 3) Else if address only: find by address (if >1 -> 409).
 async function findUserProgressive({ name, phone, address }: { name?: string; phone?: string; address?: string }) {
     const nameQ = normalize(name);
     const phoneQ = cleanDigits(phone);
@@ -163,7 +152,6 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
         phone: true,
     } as const;
 
-    // helpers
     const byName = async () => {
         if (!nameQ) return [];
         const parts = nameQ.split(/\s+/).filter(Boolean);
@@ -176,8 +164,7 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
                         { last:  { contains: b, mode: "insensitive" } },
                     ],
                 },
-                select,
-                take: 50,
+                select, take: 50,
             });
         } else {
             return prisma.user.findMany({
@@ -187,15 +174,13 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
                         { last:  { contains: nameQ, mode: "insensitive" } },
                     ],
                 },
-                select,
-                take: 50,
+                select, take: 50,
             });
         }
     };
 
     const byPhone = async () => {
         if (!phoneQ) return [];
-        // Compare digits-only version
         const all = await prisma.user.findMany({ where: { phone: { not: null } }, select, take: 500 });
         return all.filter(u => cleanDigits(u.phone) === phoneQ);
     };
@@ -211,12 +196,10 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
                     { apt:     { contains: addrQ, mode: "insensitive" } },
                 ],
             },
-            select,
-            take: 50,
+            select, take: 50,
         });
     };
 
-    // 1) start with name if provided
     if (nameQ) {
         let cands = await byName();
         if (cands.length === 1) return cands[0];
@@ -224,7 +207,6 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
             const p = await byPhone();
             if (p.length === 1) return p[0];
             if (p.length > 1) {
-                // intersect by phone
                 const set = new Set(p.map(u => u.id));
                 cands = cands.filter(u => set.has(u.id));
                 if (cands.length === 1) return cands[0];
@@ -245,7 +227,6 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
         }
     }
 
-    // 2) phone first
     if (phoneQ) {
         let cands = await byPhone();
         if (cands.length === 1) return cands[0];
@@ -264,7 +245,6 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
         }
     }
 
-    // 3) address only
     if (addrQ) {
         const cands = await byAddress();
         if (cands.length === 1) return cands[0];
@@ -277,7 +257,7 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
 // --- Main POST ---
 export async function POST(req: Request) {
     try {
-        const { name, phone, address, date }: Body = await req.json();
+        const { name, phone, address, deliveryDate, startDate, endDate }: Body = await req.json();
 
         if (!name && !phone && !address) {
             return new NextResponse(
@@ -295,7 +275,6 @@ export async function POST(req: Request) {
             );
         }
         if ((found as any)?.ambiguous) {
-            // Tell the client which options to pick from
             return new NextResponse(
                 JSON.stringify({ error: "Ambiguous", candidates: (found as any).ambiguous }),
                 { status: 409, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
@@ -307,13 +286,11 @@ export async function POST(req: Request) {
             address?: string | null; apt?: string | null; city?: string | null; state?: string | null; zip?: string | null;
         };
 
-        // Grab signatures; pick a random one (like your viewer’s “Random” export path)
         const sigs = await prisma.signature.findMany({
             where: { userId: user.id },
             orderBy: [{ slot: "asc" }, { signedAt: "asc" }],
             select: { slot: true, strokes: true },
         });
-
         if (!sigs.length) {
             return new NextResponse(
                 JSON.stringify({ error: "User has no signatures to export." }),
@@ -322,9 +299,9 @@ export async function POST(req: Request) {
         }
 
         const chosen = sigs[Math.floor(Math.random() * sigs.length)];
-        const strokes = (chosen?.strokes ?? []) as Signature; // array of strokes
+        const strokes = (chosen?.strokes ?? []) as Signature;
 
-        // Build the PDF (structure aligns with your /sign/[token]/view/page.tsx)
+        // Build PDF
         const pdf = await PDFDocument.create();
         const page = pdf.addPage([612, 792]); // US Letter
         const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -335,11 +312,10 @@ export async function POST(req: Request) {
         let y = 760;
         const usableWidth = page.getWidth() - margin * 2.5;
 
-        // Header logo (from /public/df-logo.png if present)
+        // Header logo
         const logoBytes = await readLocalLogoBytes();
         if (logoBytes) {
             try {
-                // try PNG first, fallback to JPG
                 let logoImg: any;
                 try { logoImg = await pdf.embedPng(logoBytes); }
                 catch { logoImg = await pdf.embedJpg(logoBytes); }
@@ -351,19 +327,16 @@ export async function POST(req: Request) {
                 const yLogo = y - drawH;
                 page.drawImage(logoImg, { x: xLogo, y: yLogo, width: drawW, height: drawH });
                 y = yLogo - 18;
-            } catch { /* ignore embed failures */ }
+            } catch {}
         }
 
         // Title
         page.drawText("Member Attestation of Medically Tailored Meal Delivery", { x: margin, y, size: 16, font: bold });
         y -= 28;
-        page.drawLine({
-            start: { x: margin, y }, end: { x: page.getWidth() - margin, y },
-            thickness: 1, color: rgb(0.8, 0.8, 0.8),
-        });
+        page.drawLine({ start: { x: margin, y }, end: { x: page.getWidth() - margin, y }, thickness: 1, color: rgb(0.8,0.8,0.8) });
         y -= 28;
 
-        // Member info (real address)
+        // Member info
         const fullName = `${user.first ?? ""} ${user.last ?? ""}`.trim();
         const addressLine = [
             user.address ?? "", user.apt ?? "",
@@ -372,7 +345,6 @@ export async function POST(req: Request) {
 
         drawLabelValueBold({ page, font, bold, x: margin, y, size: 12, label: "Member Name", value: fullName || "—" });
         y -= lineGap;
-
         page.drawText(`Address: ${addressLine || "—"}`, { x: margin, y, size: 12, font });
         y -= 30;
 
@@ -380,8 +352,11 @@ export async function POST(req: Request) {
         page.drawText("Meal Delivery Information", { x: margin, y, size: 14, font: bold });
         y -= lineGap;
 
-        const dateString = normalize(date) || todayString();
-        page.drawText(`Date of Delivery: ${dateString}`, { x: margin + 12, y, size: 12, font });
+        const dDelivery = normalize(deliveryDate) || todayMDY();
+        const dStart = normalize(startDate) || dDelivery;
+        const dEnd   = normalize(endDate)   || dDelivery;
+
+        page.drawText(`Date of Delivery: ${dDelivery}`, { x: margin + 12, y, size: 12, font });
         y -= lineGap;
 
         page.drawText("Type of Meals (if applicable):", { x: margin + 12, y, size: 12, font });
@@ -393,30 +368,33 @@ export async function POST(req: Request) {
 
         // Divider
         y -= 30;
-        page.drawLine({
-            start: { x: margin, y }, end: { x: page.getWidth() - margin, y },
-            thickness: 1, color: rgb(0.8, 0.8, 0.8),
-        });
+        page.drawLine({ start: { x: margin, y }, end: { x: page.getWidth() - margin, y }, thickness: 1, color: rgb(0.8,0.8,0.8) });
 
         // Attestation
         y -= 30;
         page.drawText("Member Delivery Attestation", { x: margin, y, size: 14, font: bold });
         y -= lineGap * 1.5;
 
-        const firstLineStart = `${fullName || "Member"}`;
-        page.drawText(firstLineStart, { x: margin, y, size: 12, font: bold });
-        const startWidth = bold.widthOfTextAtSize(firstLineStart, 12);
-        const afterName = `  confirms that they personally received their medically tailored meals on ${dateString}.`;
-        const remainingWidth = Math.max(0, usableWidth - startWidth);
+        // REQUIRED TEXT:
+        // "<Name> confirms that they personally received their medically
+        //  tailored meals on <delivery date> with meals for <start date> to <end date>."
+        const firstChunk = `${fullName || "Member"} `;
+        page.drawText(firstChunk, { x: margin, y, size: 12, font: bold });
+        const startWidth = bold.widthOfTextAtSize(firstChunk, 12);
 
+        const attestationTail =
+            `confirms that they personally received their medically tailored meals on ${dDelivery} ` +
+            `with meals for ${dStart} to ${dEnd}.`;
+
+        const remainingWidth = Math.max(0, usableWidth - startWidth);
         if (remainingWidth > 40) {
-            const lines = wrapText(afterName, remainingWidth, font, 12);
+            const lines = wrapText(attestationTail, remainingWidth, font, 12);
             if (lines.length) page.drawText(lines[0], { x: margin + startWidth, y, size: 12, font });
             for (let i = 1; i < lines.length; i++) { y -= 16; page.drawText(lines[i], { x: margin, y, size: 12, font }); }
             y -= 16;
         } else {
             y -= 16;
-            for (const ln of wrapText(afterName, usableWidth, font, 12)) {
+            for (const ln of wrapText(attestationTail, usableWidth, font, 12)) {
                 page.drawText(ln, { x: margin, y, size: 12, font });
                 y -= 16;
             }
@@ -433,40 +411,31 @@ export async function POST(req: Request) {
         page.drawText("Signature", { x: margin, y, size: 14, font: bold });
         y -= 10;
 
-        // Draw strokes into a 300x100 box
         const drawW = 300, drawH = 100;
         const xImg = margin;
         const yImg = y - drawH - 8;
         drawSignatureStrokes(page, strokes, { x: xImg, y: yImg, w: drawW, h: drawH });
 
-        // Date (same as above)
-        page.drawText(`Date: ${dateString}`, { x: margin + drawW + 60, y: yImg + drawH / 2, size: 12, font });
+        page.drawText(`Date: ${dDelivery}`, { x: margin + drawW + 60, y: yImg + drawH / 2, size: 12, font });
 
-        // Footer
+        // Save
+        const bytes = await pdf.save();
 
+        // Build a friendly filename for downloads (the extension will override when uploading)
+        const safeName = (fullName || "member").replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
+        const safeDates = `${dStart.replaceAll("/", "-")}_to_${dEnd.replaceAll("/", "-")}`;
+        const serverFilename = `${safeName}_${safeDates}.pdf`;
 
-        // Return PDF
-
-// Return PDF
-        const bytes = await pdf.save(); // Uint8Array
-
-// Get a true ArrayBuffer (typed as ArrayBuffer, not ArrayBufferLike)
-        const ab: ArrayBuffer = bytes.buffer.slice(
-            bytes.byteOffset,
-            bytes.byteOffset + bytes.byteLength
-        ) as ArrayBuffer;
+        const ab: ArrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
         return new NextResponse(ab, {
             status: 200,
             headers: {
                 "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="${(fullName || "member")
-                    .replace(/\s+/g, "_")}_attestation.pdf"`,
+                "Content-Disposition": `attachment; filename="${serverFilename}"`,
                 ...CORS_HEADERS,
             },
         });
-
-
     } catch (err: any) {
         console.error("[ext/attestation] error:", err);
         return new NextResponse(
