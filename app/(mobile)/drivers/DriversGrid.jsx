@@ -4,30 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { MapPin, ChevronRight, Hash, User, PenLine } from "lucide-react";
 
-/* ---------------- 60-second client-side cache for signatures ---------------- */
-const sigCache = {
-    at: 0,
-    rows: [],
-    get() {
-        return Date.now() - this.at <= 60_000 ? this.rows : null;
-    },
-    set(rows) {
-        this.rows = Array.isArray(rows) ? rows : [];
-        this.at = Date.now();
-    },
-};
-
+/* ---------------- signatures: always fetch fresh ---------------- */
 async function fetchSignStatusClient() {
-    const cached = sigCache.get();
-    if (cached) return cached;
     const res = await fetch("/api/signatures/status", {
-        cache: "force-cache",
-        headers: { "cache-control": "max-age=60" },
+        cache: "no-store",
+        headers: { "cache-control": "no-store" },
     });
     if (!res.ok) return [];
-    const json = await res.json();
-    sigCache.set(json);
-    return json;
+    return res.json();
 }
 
 export default function DriversGrid({ drivers = [], allStops = [] }) {
@@ -113,7 +97,7 @@ export default function DriversGrid({ drivers = [], allStops = [] }) {
                                 <span>{sigUsersDone} / {total} signatures</span>
                             </div>
                             <div className="progress sig" style={{ marginTop: 8 }}>
-                                <span style={{ width: `${pctSigs}%` ,background: color}} />
+                                <span style={{ width: `${pctSigs}%`, background: color }} />
                             </div>
                         </div>
                     </Link>

@@ -4,8 +4,8 @@ import { Truck } from "lucide-react";
 import SearchStops from "../../../components/SearchStops";
 import DriversGrid from "./DriversGrid";
 
-/** Cache this page's data for 60 seconds */
-export const revalidate = 60;
+/** Always dynamic — no caching/ISR */
+export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Delivery Routes" };
 
