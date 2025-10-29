@@ -1,23 +1,21 @@
-export const runtime = "nodejs";       // send logs to server function logs
-export const dynamic = "force-dynamic"; // belt & suspenders for App Router caching
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 // app/api/route/optimize/route.ts
-
 
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 
-// 🔁 ADJUST THIS IMPORT PATH to where you saved the planner file you pasted earlier.
-import { planRoutesByAreaBalanced } from "../../../../utils/routing/areaBalance"; // <-- change if needed
+import { planRoutesByAreaBalanced } from "../../../../utils/routing/areaBalance";
 
 const prisma = new PrismaClient();
 
-// Diet Fantasy HQ (kept for single-driver local ordering helpers if needed)
 const ORIGIN = { lat: 41.14602684379917, lng: -73.98927105396123 };
 
 type Body = {
-    day?: string;                  // "monday"..."sunday" or "all" (default "all")
-    driverId?: number | string;    // optimize a single driver (local reorder only)
-    useDietFantasyStart?: boolean; // if false, endpoint no-ops (back-compat)
+    day?: string;
+    driverId?: number | string;
+    useDietFantasyStart?: boolean;
+    consolidateDuplicates?: boolean; // NEW: run duplicate-address consolidation across drivers
 };
 
 function normalizeDay(raw?: string | null) {
@@ -26,7 +24,6 @@ function normalizeDay(raw?: string | null) {
     return days.includes(s) ? s : "all";
 }
 
-/** Safely coerce Prisma.JsonValue stopIds -> number[] */
 function jsonToNumberArray(val: Prisma.JsonValue | null | undefined): number[] {
     if (!Array.isArray(val)) return [];
     return (val as Prisma.JsonArray)
@@ -34,7 +31,7 @@ function jsonToNumberArray(val: Prisma.JsonValue | null | undefined): number[] {
         .filter((n) => Number.isFinite(n)) as number[];
 }
 
-/** ---------- Distance helpers (for single-driver fallback) ---------- */
+/* ----------------- distance + TSP helpers (unchanged) ----------------- */
 type StopPt = { id: number; lat: number; lng: number };
 function haversineMiles(a: {lat:number;lng:number}, b: {lat:number;lng:number}) {
     const R = 3958.7613;
@@ -53,8 +50,6 @@ function tourLength(points: StopPt[], tour: number[]): number {
     for (let i = 0; i < tour.length - 1; i++) sum += d(points[tour[i]], points[tour[i+1]]);
     return sum;
 }
-
-/** Plain nearest-neighbor starting at the stop closest to ORIGIN (for single-driver path) */
 function nearestNeighbor(points: StopPt[]): number[] {
     const n = points.length;
     if (n <= 1) return Array.from({ length: n }, (_, i) => i);
@@ -81,13 +76,11 @@ function nearestNeighbor(points: StopPt[]): number[] {
     }
     return order;
 }
-
 function twoOptImprove(points: StopPt[], order: number[], maxLoops = 60): number[] {
     const n = order.length;
     if (n < 4) return order.slice();
     const ord = order.slice();
     let improved = true, loops = 0;
-
     while (improved && loops < maxLoops) {
         improved = false; loops++;
         for (let i = 0; i < n - 3; i++) {
@@ -106,6 +99,120 @@ function twoOptImprove(points: StopPt[], order: number[], maxLoops = 60): number
     return ord;
 }
 
+/* ----------------- NEW: duplicate-address consolidation ----------------- */
+// We’ll consolidate using a normalized address key. If your Stop fields differ,
+// tweak `addrKeyOf`.
+function norm(s: unknown) {
+    return String(s ?? "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[^\p{L}\p{N}\s]/gu, "")
+        .trim();
+}
+function addrKeyOf(s: {
+    address?: string | null;
+    apt?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+}) {
+    return norm([s.address, s.apt, s.city, s.state, s.zip].filter(Boolean).join(","));
+}
+
+/**
+ * Move stops that share the *same normalized address* onto the same driver:
+ * pick the driver who already has the plurality for that address.
+ * Only affects not-completed stops for the selected day.
+ */
+async function consolidateDuplicateAddresses(day: string) {
+    // Load not-completed stops with address + driver
+    const stops = await prisma.stop.findMany({
+        where: { ...(day === "all" ? {} : { day }), completed: false },
+        select: { id: true, address: true, apt: true, city: true, state: true, zip: true, assignedDriverId: true },
+    });
+
+    type G = { key: string; ids: number[]; byDriver: Map<number, number> };
+    const groups = new Map<string, G>();
+
+    for (const s of stops) {
+        const key = addrKeyOf(s);
+        if (!key) continue;
+        let g = groups.get(key);
+        if (!g) { g = { key, ids: [], byDriver: new Map() }; groups.set(key, g); }
+        g.ids.push(s.id);
+        const d = Number(s.assignedDriverId ?? NaN);
+        if (Number.isFinite(d)) g.byDriver.set(d, (g.byDriver.get(d) || 0) + 1);
+    }
+
+    const tx: Prisma.PrismaPromise<any>[] = [];
+    const affectedDrivers = new Set<number>();
+
+    for (const g of groups.values()) {
+        if (g.ids.length < 2) continue; // only care about duplicates
+
+        // choose the driver with the max count for this address (plurality)
+        let winner: number | null = null, best = -1;
+        for (const [driverId, cnt] of g.byDriver.entries()) {
+            if (cnt > best) { best = cnt; winner = driverId; }
+        }
+        if (winner == null || !Number.isFinite(winner)) continue;
+
+        // fetch current assignment for these ids
+        const cur = await prisma.stop.findMany({
+            where: { id: { in: g.ids } },
+            select: { id: true, assignedDriverId: true },
+        });
+
+        const needsMove = cur.filter(s => s.assignedDriverId !== winner).map(s => s.id);
+        if (!needsMove.length) continue;
+
+        // move all duplicates to the winner (keep order untouched here; per-driver reorder handles it later)
+        tx.push(
+            prisma.stop.updateMany({
+                where: { id: { in: needsMove } },
+                data: { assignedDriverId: winner },
+            })
+        );
+
+        // track drivers to rebuild their stopIds mirrors
+        for (const s of cur) {
+            if (s.assignedDriverId != null) affectedDrivers.add(Number(s.assignedDriverId));
+        }
+        affectedDrivers.add(Number(winner));
+    }
+
+    if (tx.length) {
+        await prisma.$transaction(tx);
+
+        // rebuild stopIds for affected drivers (mirror field)
+        const byDriver = await prisma.stop.groupBy({
+            by: ["assignedDriverId"],
+            where: { ...(day === "all" ? {} : { day }), completed: false, assignedDriverId: { not: null } },
+            _count: { _all: true },
+        });
+
+        const existingDrivers = new Set<number>(byDriver.map(x => Number(x.assignedDriverId)));
+        for (const driverId of [...affectedDrivers]) {
+            if (!Number.isFinite(driverId)) continue;
+            // Fetch all current stops for this driver and write back the list (order preserved if present)
+            const ids = (await prisma.stop.findMany({
+                where: { assignedDriverId: driverId, ...(day === "all" ? {} : { day }), completed: false },
+                select: { id: true, order: true },
+                orderBy: [{ order: "asc" }, { id: "asc" }],
+            })).map(s => s.id);
+
+            await prisma.driver.update({
+                where: { id: driverId },
+                data: { stopIds: ids as unknown as Prisma.InputJsonValue },
+            }).catch(() => void 0);
+        }
+
+        return { changed: true, affectedDrivers: [...affectedDrivers].filter(Number.isFinite) as number[] };
+    }
+    return { changed: false, affectedDrivers: [] as number[] };
+}
+
+/* ----------------- single-driver local reorder ----------------- */
 async function optimizeSingleDriver(driverId: number) {
     const driver = await prisma.driver.findUnique({
         where: { id: driverId },
@@ -117,7 +224,7 @@ async function optimizeSingleDriver(driverId: number) {
     if (!ids.length) return { driverId, changed: false, reason: "no stops" };
 
     const stops = await prisma.stop.findMany({
-        where: { id: { in: ids }, /* optional: completed: false */ },
+        where: { id: { in: ids }, /* completed: false */ },
         select: { id: true, lat: true, lng: true },
     });
     const byId = new Map(stops.map((s) => [s.id, s]));
@@ -143,11 +250,9 @@ async function optimizeSingleDriver(driverId: number) {
     }
 
     await prisma.$transaction([
-        // update Stop.order + assigned mirror
         ...optimizedIds.map((sid, i) =>
             prisma.stop.update({ where: { id: sid }, data: { order: i + 1, assignedDriverId: driverId } })
         ),
-        // update Driver.stopIds
         prisma.driver.update({
             where: { id: driver.id },
             data: { stopIds: optimizedIds as unknown as Prisma.InputJsonValue },
@@ -162,130 +267,53 @@ async function optimizeSingleDriver(driverId: number) {
     };
 }
 
-/** ---------- Area-balanced replan for a whole day ---------- */
+/* ----------------- POST handler ----------------- */
 export async function POST(req: NextRequest) {
     try {
         const body = (await req.json()) as Body;
         const day = normalizeDay(body.day);
         const useDietFantasyStart = !!body.useDietFantasyStart;
         const oneDriverId = body.driverId != null ? Number(body.driverId) : null;
+        const consolidateDuplicates = !!body.consolidateDuplicates; // NEW
 
         if (!useDietFantasyStart) {
             return NextResponse.json({ ok: true, appliedOptimization: false, summary: [] });
         }
 
-        // Single-driver local reorder (does NOT reassign across drivers)
+        // NEW: optional pre-pass to consolidate duplicate addresses across drivers
+        if (consolidateDuplicates) {
+            const res = await consolidateDuplicateAddresses(day);
+            // return a small ack (client will follow with per-driver optimization)
+            return NextResponse.json({
+                ok: true,
+                appliedOptimization: true,
+                phase: "consolidate-duplicates",
+                changed: res.changed,
+                affectedDrivers: res.affectedDrivers,
+            });
+        }
+
+        // Single-driver local reorder only
         if (oneDriverId !== null && Number.isFinite(oneDriverId)) {
             const result = await optimizeSingleDriver(oneDriverId);
-            return NextResponse.json({ ok: true, appliedOptimization: true, version: "v3-area-balanced", summary: [result] });
+            return NextResponse.json({ ok: true, appliedOptimization: true, version: "v3-local", summary: [result] });
         }
 
-        // 1) Load drivers for the day
-        const drivers = await prisma.driver.findMany({
-            where: day === "all" ? {} : { day },
-            select: { id: true, name: true, color: true },
-            orderBy: { id: "asc" },
-        });
-        const driverCount = drivers.length;
-        if (driverCount === 0) {
-            return NextResponse.json({ ok: true, appliedOptimization: false, summary: [], note: "No drivers for selected day." });
-        }
-
-        // 2) Take all NOT-completed stops for that day (we won't shuffle completed ones)
-        const stops = await prisma.stop.findMany({
-            where: {
-                ...(day === "all" ? {} : { day }),
-                completed: false,
-            },
-            select: { id: true, lat: true, lng: true },
-            orderBy: { id: "asc" },
-        });
-
-        // Build points for planner (geocoded only)
-        const points = stops
-            .filter(s => typeof s.lat === "number" && typeof s.lng === "number")
-            .map(s => ({ id: s.id, lat: s.lat as number, lng: s.lng as number }));
-
-        // 3) Call the SAME logic (strict outliers -> driver 0)
-        const planned = planRoutesByAreaBalanced(points, driverCount);
-        // planned[0] is transfer bucket (driverIndex 0)
-        const transfer = planned.find(p => p.driverIndex === 0) || { stopIds: [] as number[] };
-        const buckets = planned.filter(p => p.driverIndex > 0);
-
-        // Guard: buckets count can be <= driverCount if points are scarce
-        const k = Math.min(buckets.length, driverCount);
-
-        // 4) Persist: for each driver i (sorted by id), set their stopIds/order/assignedDriverId
-        const tx: Prisma.PrismaPromise<any>[] = [];
-
-        // a) Clear existing orders for all not-completed stops in scope (avoid stale orders)
-        tx.push(
-            prisma.stop.updateMany({
-                where: { ...(day === "all" ? {} : { day }), completed: false },
-                data: { order: null, assignedDriverId: null },
-            })
-        );
-
-        // b) Assign outliers to Driver 0 mirror
-        if (transfer.stopIds.length) {
-            tx.push(
-                prisma.stop.updateMany({
-                    where: { id: { in: transfer.stopIds } },
-                    data: { assignedDriverId: 0, order: null },
-                })
-            );
-        }
-
-        // c) For each real driver slot, assign the corresponding bucket by index order
-        for (let i = 0; i < k; i++) {
-            const driver = drivers[i];
-            const bucket = buckets[i];
-            const ids = bucket.stopIds;
-
-            // update stops: set order and assignedDriverId
-            ids.forEach((sid, idx) => {
-                tx.push(
-                    prisma.stop.update({
-                        where: { id: sid },
-                        data: { order: idx + 1, assignedDriverId: driver.id },
-                    })
-                );
-            });
-
-            // update driver.stopIds
-            tx.push(
-                prisma.driver.update({
-                    where: { id: driver.id },
-                    data: { stopIds: ids as unknown as Prisma.InputJsonValue },
-                })
-            );
-        }
-
-        // d) For any remaining drivers with no bucket (k < driverCount), set empty stopIds
-        for (let i = k; i < driverCount; i++) {
-            const driver = drivers[i];
-            tx.push(
-                prisma.driver.update({
-                    where: { id: driver.id },
-                    data: { stopIds: [] as unknown as Prisma.InputJsonValue },
-                })
-            );
-        }
-
-        await prisma.$transaction(tx);
-
-        // Build summary
-        const summary = drivers.slice(0, k).map((d, i) => ({
-            driverId: d.id,
-            assignedCount: buckets[i]?.count ?? 0,
-        }));
+        // NOTE: we intentionally do NOT call area-balance here for "optimize" in your requested behavior.
+        // If you ever want global re-balance, call this endpoint WITHOUT driverId AND WITHOUT consolidateDuplicates,
+        // and switch to the logic below. For now, keep disabled to avoid cross-driver moves.
+        //
+        // --- disabled global replan path ---
+        // const drivers = await prisma.driver.findMany({ ... });
+        // const stops = await prisma.stop.findMany({ ... });
+        // const planned = planRoutesByAreaBalanced(...);
+        // ... persist plan ...
+        // return NextResponse.json({ ok: true, appliedOptimization: true, version: "v3-area-balanced", ... });
 
         return NextResponse.json({
             ok: true,
-            version: "v3-area-balanced",
-            appliedOptimization: true,
-            transferCount: transfer.stopIds.length,
-            summary,
+            appliedOptimization: false,
+            note: "No action taken. Provide driverId for local reorder, or set consolidateDuplicates=true for the pre-pass.",
         });
     } catch (e: any) {
         console.error("[/api/route/optimize] error", e);

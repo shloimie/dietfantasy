@@ -452,22 +452,47 @@ export default function DriversDialog({
 
     async function optimizeAllRoutes() {
         if (!routes.length) return;
-        const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
+
         setBusy(true);
         try {
-            await Promise.all(driverIds.map(id =>
-                fetch("/api/route/optimize", {
+            const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
+
+            // STEP A: one pre-pass to consolidate duplicates across drivers
+            // (does not re-cluster globally; only moves duplicate-address stops
+            // so that all duplicates for the same address end up on the same driver)
+            {
+                const res = await fetch("/api/route/optimize", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ driverId: id, day: selectedDay }),
-                })
-            ));
+                    body: JSON.stringify({
+                        day: selectedDay,
+                        useDietFantasyStart: true,
+                        consolidateDuplicates: true, // 👈 enable the new pre-pass
+                    }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+            }
+
+            // STEP B: per-driver local reordering only (no cross-driver moves)
+            await Promise.all(
+                driverIds.map(id =>
+                    fetch("/api/route/optimize", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            driverId: id,
+                            day: selectedDay,
+                            useDietFantasyStart: true, // 👈 required so endpoint doesn't no-op
+                        }),
+                    })
+                )
+            );
+
+            // Reload the fresh state
             await loadRoutes();
 
-            /* ============================
-             *  📌 CALL SAVE-CURRENT HERE
-             * ============================ */
-            saveCurrentRun(true); // immediate after bulk change
+            // Persist snapshot to the active run
+            saveCurrentRun(true);
 
         } catch (e) {
             console.error(e);
