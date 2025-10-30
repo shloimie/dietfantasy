@@ -260,6 +260,44 @@ export default function DriversDialog({
         saveTimerRef.current = setTimeout(doPost, 800); // debounce rapid edits
     }, [selectedDay, selectedRunId]);
     /* ============================================================ */
+    // --- Manual "Save Snapshot" (always creates a NEW history item) ---
+    const saveSnapshotNow = React.useCallback(async () => {
+        setBusy(true);
+        try {
+            const res = await fetch("/api/route/runs/save-current", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    day: selectedDay,
+                    asNew: true,            // 👈 tell backend to CREATE a new snapshot
+                }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+
+            // Try to grab created id (if backend returns it)
+            let createdId = null;
+            try {
+                const payload = await res.json().catch(() => null);
+                createdId = payload?.id ?? null;
+            } catch {}
+
+            // Refresh dropdown + select newest
+            await fetchRuns();
+            try {
+                const rr = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
+                const dd = await rr.json();
+                const newest = Array.isArray(dd.runs) && dd.runs.length > 0 ? dd.runs[0].id : null;
+                setSelectedRunId(String(createdId ?? newest ?? ""));
+            } catch {}
+
+            alert("Snapshot saved to history.");
+        } catch (e) {
+            console.error("Save snapshot failed:", e);
+            alert("Save snapshot failed: " + (e.message || "Unknown error"));
+        } finally {
+            setBusy(false);
+        }
+    }, [selectedDay, fetchRuns]);
     /* ============================================================ */
 
     // === Single reassign used by the map for individual popup assigns ===
@@ -614,18 +652,34 @@ export default function DriversDialog({
                                     {runs.length === 0 && <MenuItem value="" disabled>(No history)</MenuItem>}
                                 </Select>
                             </FormControl>
+
                         </Box>
 
+
                         {/* CENTER: generate */}
-                        <Button
-                            onClick={regenerateRoutes}
-                            variant="contained"
-                            color="error"
-                            disabled={busy}
-                            sx={{ justifySelf: "center", fontWeight: 700, borderRadius: 2 }}
-                        >
-                            Generate New Route
-                        </Button>
+                        {/* CENTER: generate + save */}
+                        <Box sx={{ justifySelf: "center", display: "flex", gap: 1 }}>
+                            <Button
+                                onClick={saveSnapshotNow}
+                                variant="outlined"
+                                disabled={busy || !hasRoutes}
+                                sx={{ fontWeight: 700, borderRadius: 2 }}
+                            >
+                                Save Snapshot
+                            </Button>
+
+                            <Button
+                                onClick={regenerateRoutes}
+                                variant="contained"
+                                color="error"
+                                disabled={busy}
+                                sx={{ fontWeight: 700, borderRadius: 2 }}
+                            >
+                                Generate New Route
+                            </Button>
+
+
+                        </Box>
 
                         {/* RIGHT: link */}
                         <Box sx={{ justifySelf: "end" }}>
