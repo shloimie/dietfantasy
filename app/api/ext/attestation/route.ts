@@ -50,6 +50,7 @@ function normalize(s?: string | null) {
     return String(s ?? "").trim();
 }
 
+
 // Draw "Label: <bold value>"
 function drawLabelValueBold(opts: {
     page: any; font: any; bold: any; x: number; y: number; size: number;
@@ -151,40 +152,111 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
         address: true, apt: true, city: true, state: true, zip: true,
         phone: true,
     } as const;
+    function nameTokens(raw?: string) {
+        const s = normalize(raw)
+            .replace(/[.,']/g, " ")          // drop punctuation between tokens
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!s) return [] as string[];
 
+        // drop common suffixes
+        const drop = new Set(["jr", "sr", "ii", "iii", "iv"]);
+        const toks = s.split(" ").filter(Boolean).map(t => t.toLowerCase());
+        return toks.filter(t => !drop.has(t));
+    }
     const byName = async () => {
-        if (!nameQ) return [];
-        const parts = nameQ.split(/\s+/).filter(Boolean);
-        if (parts.length >= 2) {
-            const [a, b] = parts;
-            return prisma.user.findMany({
-                where: {
-                    AND: [
-                        { first: { contains: a, mode: "insensitive" } },
-                        { last:  { contains: b, mode: "insensitive" } },
-                    ],
-                },
-                select, take: 50,
-            });
-        } else {
+        const toks = nameTokens(nameQ);
+        if (!toks.length) return [];
+
+        if (toks.length >= 2) {
+            const firstTok = toks[0];
+            const lastTok  = toks[toks.length - 1];
+
+            // Primary: First≈firstTok AND Last≈lastTok
+            // Also try reversed (to tolerate "Martinez Anthony")
+            // Finally, a loose fallback that requires all tokens to appear in either first or last.
             return prisma.user.findMany({
                 where: {
                     OR: [
-                        { first: { contains: nameQ, mode: "insensitive" } },
-                        { last:  { contains: nameQ, mode: "insensitive" } },
+                        {
+                            AND: [
+                                { first: { contains: firstTok, mode: "insensitive" } },
+                                { last:  { contains: lastTok,  mode: "insensitive" } },
+                            ],
+                        },
+                        {
+                            AND: [
+                                { first: { contains: lastTok,  mode: "insensitive" } },
+                                { last:  { contains: firstTok, mode: "insensitive" } },
+                            ],
+                        },
+                        // Loose fallback: every token must be present in either first or last
+                        {
+                            AND: toks.map(t => ({
+                                OR: [
+                                    { first: { contains: t, mode: "insensitive" } },
+                                    { last:  { contains: t, mode: "insensitive" } },
+                                ],
+                            })),
+                        },
                     ],
                 },
-                select, take: 50,
+                select,
+                take: 100, // bumped from 50 for broader coverage
+            });
+        } else {
+            // Single token: same as before, just bump take
+            const t = toks[0];
+            return prisma.user.findMany({
+                where: {
+                    OR: [
+                        { first: { contains: t, mode: "insensitive" } },
+                        { last:  { contains: t, mode: "insensitive" } },
+                    ],
+                },
+                select,
+                take: 100,
             });
         }
     };
 
     const byPhone = async () => {
         if (!phoneQ) return [];
-        const all = await prisma.user.findMany({ where: { phone: { not: null } }, select, take: 500 });
-        return all.filter(u => cleanDigits(u.phone) === phoneQ);
-    };
 
+        const BATCH_SIZE = 1000;   // was 500
+        const MAX_SCAN   = 20000;  // safety cap to avoid runaway scans
+        let scanned = 0;
+        let lastId: number | undefined;
+        const matches: typeof select extends infer S ? Array<any> : any[] = [];
+
+        while (true) {
+            const page = await prisma.user.findMany({
+                where: { phone: { not: null } },
+                select,
+                orderBy: { id: "asc" },
+                ...(lastId ? { cursor: { id: lastId }, skip: 1 } : {}),
+                take: BATCH_SIZE,
+            });
+
+            if (!page.length) break;
+
+            for (const u of page) {
+                if (cleanDigits(u.phone) === phoneQ) {
+                    matches.push(u);
+                }
+            }
+
+            scanned += page.length;
+            if (scanned >= MAX_SCAN) break;
+
+            lastId = page[page.length - 1]!.id;
+            if (page.length < BATCH_SIZE) break; // exhausted
+            // If we already have an unambiguous match, we could `break` here;
+            // but we keep scanning to find multiple exact-digit matches, if any.
+        }
+
+        return matches;
+    };
     const byAddress = async () => {
         if (!addrQ) return [];
         return prisma.user.findMany({
