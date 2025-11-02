@@ -1,9 +1,19 @@
+// components/DriversDialog.jsx
 "use client";
 
 import * as React from "react";
 import {
-    Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, Box, Typography
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    Typography,
+    FormControl,
+    InputLabel,
+    MenuItem,
+    Select,
 } from "@mui/material";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -11,9 +21,6 @@ const DriversMapLeaflet = dynamic(() => import("./DriversMapLeaflet"), { ssr: fa
 
 import ManualGeocodeDialog from "./ManualGeocodeDialog";
 import { exportRouteLabelsPDF } from "../utils/pdfRouteLabels";
-
-// NEW: MUI pieces for the history dropdown
-import { FormControl, InputLabel, MenuItem, Select } from "@mui/material";
 
 /* =================== helpers / palette =================== */
 const palette = [
@@ -229,11 +236,8 @@ export default function DriversDialog({
     }
 
     /* ============================================================
-     *  📌 ADD: SAVE-CURRENT RUN HELPER (big block you can search for)
+     *  SAVE-CURRENT RUN (active run overwrite)
      * ============================================================ */
-    /* ============================================================
- *  📌 ADD: SAVE-CURRENT RUN HELPER (targets selected run when present)
- * ============================================================ */
     const saveTimerRef = React.useRef(null);
     const saveCurrentRun = React.useCallback((immediate = false) => {
         const doPost = async () => {
@@ -241,7 +245,6 @@ export default function DriversDialog({
                 await fetch("/api/route/runs/save-current", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    // send selectedRunId so we overwrite THAT run
                     body: JSON.stringify({
                         day: selectedDay,
                         runId: selectedRunId ? Number(selectedRunId) : undefined,
@@ -259,29 +262,24 @@ export default function DriversDialog({
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(doPost, 800); // debounce rapid edits
     }, [selectedDay, selectedRunId]);
-    /* ============================================================ */
-    // --- Manual "Save Snapshot" (always creates a NEW history item) ---
+
+    // Manual "Save Snapshot" (always creates a NEW history item)
     const saveSnapshotNow = React.useCallback(async () => {
         setBusy(true);
         try {
             const res = await fetch("/api/route/runs/save-current", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    day: selectedDay,
-                    asNew: true,            // 👈 tell backend to CREATE a new snapshot
-                }),
+                body: JSON.stringify({ day: selectedDay, asNew: true }),
             });
             if (!res.ok) throw new Error(await res.text());
 
-            // Try to grab created id (if backend returns it)
             let createdId = null;
             try {
                 const payload = await res.json().catch(() => null);
                 createdId = payload?.id ?? null;
             } catch {}
 
-            // Refresh dropdown + select newest
             await fetchRuns();
             try {
                 const rr = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
@@ -298,7 +296,6 @@ export default function DriversDialog({
             setBusy(false);
         }
     }, [selectedDay, fetchRuns]);
-    /* ============================================================ */
 
     // === Single reassign used by the map for individual popup assigns ===
     const handleReassign = React.useCallback(async (stop, toDriverId) => {
@@ -338,12 +335,8 @@ export default function DriversDialog({
                 }),
             });
             if (!res.ok) throw new Error(await res.text());
-
-            /* ============================
-             *  📌 CALL SAVE-CURRENT HERE
-             * ============================ */
-            saveCurrentRun(); // debounced after single assign
-
+            // persist snapshot to active run (debounced)
+            saveCurrentRun();
         } catch (e) {
             console.error("Reassign failed:", e);
             await loadRoutes();
@@ -408,7 +401,30 @@ export default function DriversDialog({
         }
     }
 
-// NEW: regenerate routes (fresh version)
+    // ====== NEW: dedicated cleanup ======
+    async function cleanUpNow({ silent = false } = {}) {
+        setBusy(true);
+        try {
+            const res = await fetch("/api/route/cleanup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ day: selectedDay }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            await loadRoutes();
+            await fetchRuns();
+            // Save the cleaned state back to the active run
+            saveCurrentRun(true);
+            if (!silent) alert("Cleanup completed.");
+        } catch (e) {
+            console.error("Cleanup failed:", e);
+            alert("Cleanup failed: " + (e.message || "Unknown error"));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // NEW: regenerate routes (fresh version)
     async function regenerateRoutes() {
         const countStr = window.prompt("How many drivers for the new route?", String(driverCount));
         if (countStr == null) return;
@@ -438,19 +454,16 @@ export default function DriversDialog({
             // Refresh the history dropdown (server already prunes to last 10)
             await fetchRuns();
 
-            // ✅ Make the newest run the active one so subsequent edits save back to it
+            // Select newest run as active
             try {
                 const r = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
                 const d = await r.json();
                 if (Array.isArray(d.runs) && d.runs.length > 0) {
-                    // API returns newest first (createdAt desc)
                     setSelectedRunId(String(d.runs[0].id));
                 }
             } catch (selErr) {
                 console.warn("Could not set newest run as active:", selErr);
             }
-
-            // No saveCurrentRun() here; generate already created a new RouteRun row.
         } catch (e) {
             console.error(e);
             alert("Failed to regenerate.");
@@ -458,9 +471,13 @@ export default function DriversDialog({
             setBusy(false);
         }
     }
+
+    // UPDATED: when resetting, also run a cleanup pass afterward
     async function resetAllRoutes() {
         if (!routes.length) return;
-        const ok = window.confirm(`Reset ALL routes for "${selectedDay}"? This will clear completed flags.`);
+        const ok = window.confirm(
+            `Reset ALL routes for "${selectedDay}"?\n\nNote: This will also run Cleanup (remove deleted users, paused users, or users with Delivery = false).`
+        );
         if (!ok) return;
 
         const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
@@ -473,13 +490,15 @@ export default function DriversDialog({
                     body: JSON.stringify({ driverId: id, day: selectedDay, clearProof: false }),
                 })
             ));
+
+            // Immediately follow with a cleanup pass
+            await cleanUpNow({ silent: true });
+
             await loadRoutes();
 
-            /* ============================
-             *  📌 CALL SAVE-CURRENT HERE
-             * ============================ */
-            saveCurrentRun(true); // immediate after bulk change
-
+            // Persist snapshot after bulk change
+            saveCurrentRun(true);
+            alert("Routes reset and cleaned.");
         } catch (e) {
             console.error(e);
             alert("Failed to reset routes.");
@@ -495,9 +514,7 @@ export default function DriversDialog({
         try {
             const driverIds = Array.from(new Set(routes.map(r => r.driverId).filter(Boolean)));
 
-            // STEP A: one pre-pass to consolidate duplicates across drivers
-            // (does not re-cluster globally; only moves duplicate-address stops
-            // so that all duplicates for the same address end up on the same driver)
+            // STEP A: pre-pass to consolidate duplicates across drivers
             {
                 const res = await fetch("/api/route/optimize", {
                     method: "POST",
@@ -505,7 +522,7 @@ export default function DriversDialog({
                     body: JSON.stringify({
                         day: selectedDay,
                         useDietFantasyStart: true,
-                        consolidateDuplicates: true, // 👈 enable the new pre-pass
+                        consolidateDuplicates: true,
                     }),
                 });
                 if (!res.ok) throw new Error(await res.text());
@@ -520,18 +537,14 @@ export default function DriversDialog({
                         body: JSON.stringify({
                             driverId: id,
                             day: selectedDay,
-                            useDietFantasyStart: true, // 👈 required so endpoint doesn't no-op
+                            useDietFantasyStart: true,
                         }),
                     })
                 )
             );
 
-            // Reload the fresh state
             await loadRoutes();
-
-            // Persist snapshot to the active run
             saveCurrentRun(true);
-
         } catch (e) {
             console.error(e);
             alert("Failed to optimize routes.");
@@ -568,8 +581,7 @@ export default function DriversDialog({
         return { enrichedSorted, colorsSorted };
     }, [routes, routeStops, driverColors]);
 
-    // NEW: apply a selected run
-    // NEW: apply a selected run (fresh version)
+    // Apply a selected run
     async function applyRun(id) {
         if (!id) return;
         const ok = window.confirm("Apply this saved route? This will overwrite current assignments.");
@@ -585,14 +597,9 @@ export default function DriversDialog({
             });
             if (!res.ok) throw new Error(await res.text());
 
-            // ✅ Mark the applied run as the "active" run so future edits save back to THIS run
             setSelectedRunId(String(id));
-
-            // Refresh current assignments from DB
             await loadRoutes();
-
-            // NOTE: Do NOT call saveCurrentRun() here.
-            // We want to keep history immutable; only your subsequent edits should save back to this run.
+            // (Do not auto-save here; future edits will save back to this run.)
         } catch (e) {
             console.error(e);
             alert("Failed to apply route.");
@@ -630,7 +637,7 @@ export default function DriversDialog({
                         <Box sx={{ justifySelf: "start", fontWeight: 600, display: "flex", alignItems: "center", gap: 1 }}>
                             <span>Routes Map</span>
 
-                            {/* NEW: Last 10 Runs dropdown */}
+                            {/* Last 10 Runs dropdown */}
                             <FormControl size="small" sx={{ minWidth: 220 }}>
                                 <InputLabel id="route-run-label">Last 10 Routes</InputLabel>
                                 <Select
@@ -652,13 +659,10 @@ export default function DriversDialog({
                                     {runs.length === 0 && <MenuItem value="" disabled>(No history)</MenuItem>}
                                 </Select>
                             </FormControl>
-
                         </Box>
 
-
-                        {/* CENTER: generate */}
-                        {/* CENTER: generate + save */}
-                        <Box sx={{ justifySelf: "center", display: "flex", gap: 1 }}>
+                        {/* CENTER: Save + Generate */}
+                        <Box sx={{ justifySelf: "center", display: "flex", gap: 1, flexWrap: "wrap" }}>
                             <Button
                                 onClick={saveSnapshotNow}
                                 variant="outlined"
@@ -677,8 +681,6 @@ export default function DriversDialog({
                             >
                                 Generate New Route
                             </Button>
-
-
                         </Box>
 
                         {/* RIGHT: link */}
@@ -712,7 +714,7 @@ export default function DriversDialog({
                     </Box>
                 </DialogContent>
 
-                <DialogActions>
+                <DialogActions sx={{ gap: 1, flexWrap: "wrap" }}>
                     {missingBatch.length > 0 && (
                         <Typography variant="body2" sx={{ mr: "auto", opacity: 0.8 }}>
                             {missingBatch.length} customer{missingBatch.length === 1 ? "" : "s"} are not geocoded.
@@ -748,6 +750,17 @@ export default function DriversDialog({
                         disabled={busy || !hasRoutes}
                     >
                         Download Labels
+                    </Button>
+
+                    {/* NEW: Clean Up */}
+                    <Button
+                        onClick={() => cleanUpNow()}
+                        variant="outlined"
+                        color="warning"
+                        disabled={busy}
+                        title="Remove any stops whose users were deleted, paused, or have Delivery = false; also purge orphaned data"
+                    >
+                        Clean Up
                     </Button>
 
                     <Button onClick={resetAllRoutes} variant="outlined" disabled={busy || !hasRoutes}>

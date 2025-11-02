@@ -1377,7 +1377,7 @@ export default function DriversMapLeaflet({
                     }}
                 >
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                        Stops: {totalVisibleStops} &nbsp; • Paused: {pausedVisible}
+                        Stops: {totalVisibleStops} &nbsp;
                     </div>
 
                     <CheckRow
