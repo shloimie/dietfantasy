@@ -76,21 +76,21 @@ export default function UsersTable({
             let hay = [
                 u.first, u.last, u.address, u.apt, u.city, u.county, u.zip, u.state,
                 u.phone, u.dislikes, u.medicaid ? "yes" : "no",
-                // include new IDs in search text
+                // NEW: include booleans and IDs in search
+                u.bill ? "yes" : "no",
+                u.delivery ? "yes" : "no",
                 getClientId(u), getCaseId(u),
             ]
                 .map((v) => (v == null ? "" : String(v)))
                 .join(" ")
                 .toLowerCase();
 
-            // include a compact JSON string for billings
             hay += " " + stringifyBillings(u.billings);
 
             if (u?.schedule) {
                 const k = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
                 hay +=
-                    " " +
-                    ["m","t","w","th","f","sa","su"].filter((_, i) => u.schedule[k[i]]).join(" ");
+                    " " + ["m","t","w","th","f","sa","su"].filter((_, i) => u.schedule[k[i]]).join(" ");
             }
             return hay.includes(q);
         });
@@ -118,7 +118,6 @@ export default function UsersTable({
     const sorted = React.useMemo(() => {
         if (!sortKey) return filtered;
 
-        // custom sorts
         if (sortKey === "signatures") {
             const arr = [...filtered].sort((a, b) => {
                 const ca = getSigCount(a), cb = getSigCount(b);
@@ -136,7 +135,7 @@ export default function UsersTable({
             const arr = [...filtered].sort((a, b) => {
                 const av = getDate(a.createdAt);
                 const bv = getDate(b.createdAt);
-                return sortAsc ? av - bv : bv - av; // default: newest first
+                return sortAsc ? av - bv : bv - av;
             });
             return arr;
         }
@@ -153,7 +152,7 @@ export default function UsersTable({
             return arr;
         }
 
-        // default string-ish compare
+        // default string-ish compare (booleans stringify fine)
         const arr = [...filtered].sort((a, b) => {
             const av = (a?.[sortKey] ?? "").toString().toLowerCase();
             const bv = (b?.[sortKey] ?? "").toString().toLowerCase();
@@ -182,29 +181,39 @@ export default function UsersTable({
         { key: "apt", label: "Apt", sort: ["apt"] },
         { key: "city", label: "City", sort: ["city"] },
         { key: "dislikes", label: "Dislikes", sort: ["dislikes"] },
-        { key: "billings", label: "Billings", sort: ["billings"] }, // NEW visible column
+        { key: "billings", label: "Billings", sort: ["billings"] }, // visible
         { key: "actions", label: "", sort: [] },
     ];
 
-    // Detail shelf (hidden until expanded): Client ID + Case ID
+    // Detail shelf (hidden until expanded): includes Bill + Delivery + IDs + meta
     const detailCols = [
         { key: "complex", label: "Complex", sort: ["complex"] },
         { key: "paused", label: "Paused", sort: ["paused"] },
+        { key: "medicaid", label: "Medicaid", sort: ["medicaid"] },
+
+        // NEW booleans
+        { key: "bill", label: "Bill", sort: ["bill"] },
+        { key: "delivery", label: "Delivery", sort: ["delivery"] },
+
         { key: "county", label: "County", sort: ["county"] },
         { key: "zip", label: "Zip", sort: ["zip"] },
         { key: "state", label: "State", sort: ["state"] },
         { key: "phone", label: "Phone", sort: ["phone"] },
-        { key: "medicaid", label: "Medicaid", sort: ["medicaid"] },
         { key: "schedule", label: "Schedule", sort: ["schedule"] },
         { key: "geo", label: "Geo", sort: ["geo"] },
         { key: "createdAt", label: "Created", sort: ["createdAt"] },
-        // NEW hidden fields
+
+        // hidden IDs with links
         { key: "clientId", label: "Client ID", sort: ["clientId"] },
         { key: "caseId", label: "Case ID", sort: ["caseId"] },
     ];
 
     const columns = expanded ? [indexCol, ...baseCols, ...detailCols] : [indexCol, ...baseCols];
     const baseCount = 1 + baseCols.length;
+
+    const SortGlyph = ({ active }) =>
+        active ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)
+            : (<UnfoldMoreIcon fontSize="inherit" />);
 
     const setSort = (k) => {
         setSortAsc((prev) => (k === sortKey ? !prev : true));
@@ -222,6 +231,14 @@ export default function UsersTable({
         } catch {
             return String(v);
         }
+    };
+
+    // Build Unite Us URL when both IDs exist (clientId first in path after caseId)
+    const uniteUsHref = (u) => {
+        const cid = getClientId(u);
+        const kid = getCaseId(u);
+        if (!cid || !kid) return null;
+        return `https://app.uniteus.io/dashboard/cases/open/${encodeURIComponent(kid)}/contact/${encodeURIComponent(cid)}`;
     };
 
     const SignCell = (u) => {
@@ -339,54 +356,54 @@ export default function UsersTable({
                                         ...(isIndex ? { width: 52, minWidth: 52, textAlign: "right" } : null),
                                     }}
                                 >
-                                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                            {isIndex ? "#" : col.key === "actions" ? (
-                                                <Tooltip title={expanded ? "Collapse details" : "Expand details"}>
-                                                    <IconButton
-                                                        size="small"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setExpanded((v) => !v);
-                                                        }}
-                                                    >
-                                                        {expanded ? <CloseFullscreenIcon /> : <OpenInFullIcon />}
-                                                    </IconButton>
-                                                </Tooltip>
-                                            ) : (
-                                                <>
-                                                    {col.label}
-                                                    {col.key === "name" && (
-                                                        <>
-                                                            <IconButton
-                                                                size="small"
-                                                                onClick={(e) => { e.stopPropagation(); setSort("first"); }}
-                                                                sx={{ p: 0.25 }}
-                                                            >
-                                                                {sortKey === "first" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
-                                                                <span style={{ fontSize: 11, marginLeft: 2 }}>F</span>
-                                                            </IconButton>
-                                                            <IconButton
-                                                                size="small"
-                                                                onClick={(e) => { e.stopPropagation(); setSort("last"); }}
-                                                                sx={{ p: 0.25 }}
-                                                            >
-                                                                {sortKey === "last" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
-                                                                <span style={{ fontSize: 11, marginLeft: 2 }}>L</span>
-                                                            </IconButton>
-                                                        </>
-                                                    )}
-                                                    {k && col.key !== "name" && (
-                                                        <IconButton
-                                                            size="small"
-                                                            onClick={(e) => { e.stopPropagation(); setSort(k); }}
-                                                            sx={{ p: 0.25 }}
-                                                        >
-                                                            {sortKey === k ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
-                                                        </IconButton>
-                                                    )}
-                                                </>
-                                            )}
-                                        </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {isIndex ? "#" : col.key === "actions" ? (
+                          <Tooltip title={expanded ? "Collapse details" : "Expand details"}>
+                              <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpanded((v) => !v);
+                                  }}
+                              >
+                                  {expanded ? <CloseFullscreenIcon /> : <OpenInFullIcon />}
+                              </IconButton>
+                          </Tooltip>
+                      ) : (
+                          <>
+                              {col.label}
+                              {col.key === "name" && (
+                                  <>
+                                      <IconButton
+                                          size="small"
+                                          onClick={(e) => { e.stopPropagation(); setSort("first"); }}
+                                          sx={{ p: 0.25 }}
+                                      >
+                                          {sortKey === "first" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                          <span style={{ fontSize: 11, marginLeft: 2 }}>F</span>
+                                      </IconButton>
+                                      <IconButton
+                                          size="small"
+                                          onClick={(e) => { e.stopPropagation(); setSort("last"); }}
+                                          sx={{ p: 0.25 }}
+                                      >
+                                          {sortKey === "last" ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                          <span style={{ fontSize: 11, marginLeft: 2 }}>L</span>
+                                      </IconButton>
+                                  </>
+                              )}
+                              {k && col.key !== "name" && (
+                                  <IconButton
+                                      size="small"
+                                      onClick={(e) => { e.stopPropagation(); setSort(k); }}
+                                      sx={{ p: 0.25 }}
+                                  >
+                                      {sortKey === k ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />) : <UnfoldMoreIcon fontSize="inherit" />}
+                                  </IconButton>
+                              )}
+                          </>
+                      )}
+                    </span>
                                 </th>
                             );
                         })}
@@ -440,11 +457,13 @@ export default function UsersTable({
                             ),
                             complex: <div style={wrap}>{u.complex ? "Yes" : "No"}</div>,
                             paused: <div style={wrap}>{u.paused ? "Yes" : "No"}</div>,
+                            medicaid: <div style={wrap}>{u.medicaid ? "Yes" : "No"}</div>,
+                            bill: <div style={wrap}>{u.bill ? "Yes" : "No"}</div>,
+                            delivery: <div style={wrap}>{u.delivery ? "Yes" : "No"}</div>,
                             county: <div style={wrap}>{u.county ?? ""}</div>,
                             zip: <div style={wrap}>{u.zip ?? ""}</div>,
                             state: <div style={wrap}>{u.state ?? ""}</div>,
                             phone: <div style={wrap}>{u.phone ?? ""}</div>,
-                            medicaid: <div style={wrap}>{u.medicaid ? "Yes" : "No"}</div>,
                             schedule: (
                                 <div style={wrap}>
                                     {u.schedule
@@ -463,9 +482,50 @@ export default function UsersTable({
                                 </div>
                             ),
                             createdAt: <div style={{ ...wrap, opacity: 0.8 }}>{fmtCreated(u.createdAt)}</div>,
-                            // hidden detail fields
-                            clientId: <div style={{ ...wrap, ...mono }}>{getClientId(u) ?? "—"}</div>,
-                            caseId:   <div style={{ ...wrap, ...mono }}>{getCaseId(u) ?? "—"}</div>,
+                            caseId: (() => {
+                                const caseId = getCaseId(u);
+                                if (!caseId) return <div style={{ ...wrap, ...mono }}>—</div>;
+                                const href = uniteUsHref(u);
+                                return (
+                                    <div style={{ ...wrap, ...mono }}>
+                                        {href ? (
+                                            <a
+                                                href={href}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{ textDecoration: "underline", color: "#1976d2" }}
+                                                title="Open in Unite Us"
+                                            >
+                                                {caseId}
+                                            </a>
+                                        ) : (
+                                            caseId
+                                        )}
+                                    </div>
+                                );
+                            })(),
+                            clientId: (() => {
+                                const clientId = getClientId(u);
+                                if (!clientId) return <div style={{ ...wrap, ...mono }}>—</div>;
+                                const href = uniteUsHref(u);
+                                return (
+                                    <div style={{ ...wrap, ...mono }}>
+                                        {href ? (
+                                            <a
+                                                href={href}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{ textDecoration: "underline", color: "#1976d2" }}
+                                                title="Open in Unite Us"
+                                            >
+                                                {clientId}
+                                            </a>
+                                        ) : (
+                                            clientId
+                                        )}
+                                    </div>
+                                );
+                            })(),
                         };
 
                         return (

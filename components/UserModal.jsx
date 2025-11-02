@@ -12,9 +12,9 @@ import MapConfirmDialog from "./MapConfirmDialog";
 import { geocodeOneClient } from "../utils/geocodeOneClient";
 import { buildGeocodeQuery } from "../utils/addressHelpers";
 
-const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-const ALL_TRUE = DAYS.reduce((a, d) => (a[d] = true, a), {});
-const ALL_FALSE = DAYS.reduce((a, d) => (a[d] = false, a), {});
+const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+const ALL_TRUE = DAYS.reduce((a,d)=>(a[d]=true,a),{});
+const ALL_FALSE = DAYS.reduce((a,d)=>(a[d]=false,a),{});
 
 const EMPTY = {
     id: undefined,
@@ -23,12 +23,41 @@ const EMPTY = {
     city: "", county: "", zip: "", state: "",
     phone: "", dislikes: "",
     medicaid: false, paused: false, complex: false,
+
+    // NEW flags (default true)
+    bill: true,
+    delivery: true,
+
     schedule: { ...ALL_FALSE },
     lat: null, lng: null,
+
+    // Unite Us linkage (required URL → parsed IDs)
+    caseUrl: "",
+    caseId: null,
+    clientId: null,
 };
+
+function parseUniteUsUrl(urlStr) {
+    try {
+        const u = new URL(String(urlStr));
+        const path = u.pathname.replace(/\/+$/, "");
+        const m = /\/cases\/open\/([0-9a-fA-F-]{10,})\/contact\/([0-9a-fA-F-]{10,})/.exec(path);
+        if (!m) return null;
+        const [, caseId, clientId] = m;
+        return { caseId, clientId };
+    } catch { return null; }
+}
+
+function composeUniteUsUrl(caseId, clientId) {
+    if (!caseId || !clientId) return "";
+    return `https://app.uniteus.io/dashboard/cases/open/${encodeURIComponent(caseId)}/contact/${encodeURIComponent(clientId)}`;
+}
 
 function normalizeUser(u = {}) {
     const isNew = !u.id;
+    const existingCaseId = u.caseId ?? u.case_id ?? null;
+    const existingClientId = u.clientId ?? u.client_id ?? null;
+    const derivedUrl = composeUniteUsUrl(existingCaseId, existingClientId);
 
     return {
         ...EMPTY,
@@ -44,18 +73,22 @@ function normalizeUser(u = {}) {
         phone: u.phone ?? "",
         dislikes: u.dislikes ?? "",
 
-        // ✅ Default Medicaid to true for new users
         medicaid: isNew ? !!(u.medicaid ?? true) : !!u.medicaid,
-
-        // keep existing behavior for others (but safe defaults for new)
         paused: isNew ? !!(u.paused ?? false) : !!u.paused,
         complex: isNew ? !!(u.complex ?? false) : !!u.complex,
 
-        // you already default new user schedule to all true
+        // NEW defaults for new users
+        bill: isNew ? !!(u.bill ?? true) : !!u.bill,
+        delivery: isNew ? !!(u.delivery ?? true) : !!u.delivery,
+
         schedule: u.id ? { ...ALL_FALSE, ...(u.schedule || {}) } : { ...ALL_TRUE },
 
         lat: typeof u.lat === "number" ? u.lat : (typeof u.latitude === "number" ? u.latitude : null),
         lng: typeof u.lng === "number" ? u.lng : (typeof u.longitude === "number" ? u.longitude : null),
+
+        caseId: existingCaseId,
+        clientId: existingClientId,
+        caseUrl: u.caseUrl ?? derivedUrl ?? "",
     };
 }
 
@@ -75,17 +108,16 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
     const [saving, setSaving] = React.useState(false);
     const [geoSuccess, setGeoSuccess] = React.useState(false);
 
-    // separate flag for background persisting lat/lng (doesn't block UI)
     const [geoPersisting, setGeoPersisting] = React.useState(false);
+    const [caseUrlError, setCaseUrlError] = React.useState("");
 
     const inflight = React.useRef(new Set());
 
-    // --- helper: minimal PUT to persist lat/lng (and normalized address) for existing users
     async function persistLatLng(userId, geo) {
         if (!Number.isFinite(Number(userId))) return;
         setGeoPersisting(true);
         try {
-            const res = await fetch(`/api/users/${userId}`, {
+            await fetch(`/api/users/${userId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -96,12 +128,8 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     ...(geo.zip ? { zip: geo.zip } : {}),
                 }),
             });
-            // ignore response; non-blocking
-        } catch (_) {
-            // swallow error
-        } finally {
-            setGeoPersisting(false);
-        }
+        } catch (_) {}
+        finally { setGeoPersisting(false); }
     }
 
     const trackedFetch = async (input, init = {}) => {
@@ -140,11 +168,33 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         setSaving(false);
         setGeoSuccess(false);
         setGeoPersisting(false);
+        setCaseUrlError("");
         abortAll();
     }, [open, editingUser]);
 
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const setSched = (k, v) => setForm(f => ({ ...f, schedule: { ...f.schedule, [k]: v } }));
+
+    const onCaseUrlChange = (e) => {
+        const url = e.target.value;
+        set("caseUrl", url);
+        if (!url || !url.trim()) {
+            setCaseUrlError("Case URL is required");
+            set("caseId", null);
+            set("clientId", null);
+            return;
+        }
+        const parsed = parseUniteUsUrl(url);
+        if (!parsed) {
+            setCaseUrlError("Must match /cases/open/{caseId}/contact/{clientId}");
+            set("caseId", null);
+            set("clientId", null);
+            return;
+        }
+        setCaseUrlError("");
+        set("caseId", parsed.caseId);
+        set("clientId", parsed.clientId);
+    };
 
     async function tryAutoGeocode() {
         if (saving || geoBusy) return;
@@ -184,12 +234,10 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                 }
                 setGeoSuccess(true);
                 setTimeout(() => setGeoSuccess(false), 2000);
-            } catch (e2) {
+            } catch {
                 setGeoErr("Address not found. Try suggestions or map selection.");
             }
-        } finally {
-            setGeoBusy(false);
-        }
+        } finally { setGeoBusy(false); }
     }
 
     async function openSuggestions() {
@@ -206,12 +254,8 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
             setCands(Array.isArray(data?.items) ? data.items : []);
             setHint({ shownFor: q, queryUsed: data?.queryUsed || q });
         } catch (e) {
-            if (e?.name !== "AbortError") {
-                setGeoErr("Failed to load suggestions. Try again or use map.");
-            }
-        } finally {
-            setGeoBusy(false);
-        }
+            if (e?.name !== "AbortError") setGeoErr("Failed to load suggestions. Try again or use map.");
+        } finally { setGeoBusy(false); }
     }
 
     async function pickCandidate(item) {
@@ -221,10 +265,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         setCandsOpen(false);
         setGeoErr("");
         if (form.id) {
-            await persistLatLng(form.id, {
-                lat, lng,
-                address: form.address, city: form.city, state: form.state, zip: form.zip,
-            });
+            await persistLatLng(form.id, { lat, lng, address: form.address, city: form.city, state: form.state, zip: form.zip });
         }
         setGeoSuccess(true);
         setTimeout(() => setGeoSuccess(false), 2000);
@@ -235,10 +276,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         setMapOpen(false);
         setGeoErr("");
         if (form.id) {
-            await persistLatLng(form.id, {
-                lat, lng,
-                address: form.address, city: form.city, state: form.state, zip: form.zip,
-            });
+            await persistLatLng(form.id, { lat, lng, address: form.address, city: form.city, state: form.state, zip: form.zip });
         }
         setGeoSuccess(true);
         setTimeout(() => setGeoSuccess(false), 2000);
@@ -246,6 +284,18 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
 
     const handleSave = async () => {
         if (saving || geoBusy) return;
+
+        // Require valid case URL → IDs
+        if (!form.caseUrl || !form.caseUrl.trim()) {
+            setCaseUrlError("Case URL is required");
+            return;
+        }
+        const parsed = parseUniteUsUrl(form.caseUrl);
+        if (!parsed?.caseId || !parsed?.clientId) {
+            setCaseUrlError("Must match /cases/open/{caseId}/contact/{clientId}");
+            return;
+        }
+
         if (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number")) {
             setGeoErr("Please geocode the address first (use Auto, Suggestions, or Map).");
             return;
@@ -264,9 +314,18 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                 city: form.city, county: form.county, state: form.state, zip: form.zip,
                 phone: form.phone, dislikes: form.dislikes,
                 medicaid: !!form.medicaid, paused: !!form.paused, complex: !!form.complex,
+
+                // NEW flags
+                bill: !!form.bill,
+                delivery: !!form.delivery,
+
                 schedule: form.schedule,
                 ...(typeof form.lat === "number" ? { lat: form.lat } : {}),
                 ...(typeof form.lng === "number" ? { lng: form.lng } : {}),
+
+                // unite us IDs (parsed from URL)
+                caseId: parsed.caseId,
+                clientId: parsed.clientId,
             };
 
             const res = await fetch(url, {
@@ -311,9 +370,11 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
         onClose?.();
     };
 
+    const validCaseUrl = !!parseUniteUsUrl(form.caseUrl);
     const createDisabled =
         saving || geoBusy || geoPersisting ||
-        (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number"));
+        (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number")) ||
+        !validCaseUrl;
 
     return (
         <Dialog
@@ -343,46 +404,59 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                     <TextField label="Dislikes" value={form.dislikes} onChange={(e) => set("dislikes", e.target.value)} disabled={saving} />
                 </Box>
 
+                {/* Required Unite Us Case URL */}
+                <Box sx={{ mt: 2 }}>
+                    <TextField
+                        label="Unite Us Case URL (required)"
+                        placeholder="https://app.uniteus.io/dashboard/cases/open/{CASE_ID}/contact/{CLIENT_ID}"
+                        value={form.caseUrl}
+                        onChange={onCaseUrlChange}
+                        disabled={saving}
+                        fullWidth
+                        required
+                        error={!!caseUrlError || (!!form.caseUrl && !validCaseUrl)}
+                        helperText={
+                            caseUrlError ||
+                            (form.caseUrl && !validCaseUrl
+                                ? "Must match /cases/open/{caseId}/contact/{clientId}"
+                                : "Paste the full URL from Unite Us")
+                        }
+                    />
+                    {form.caseId && form.clientId && (
+                        <Typography variant="caption" sx={{ mt: 0.5, display: "block", color: "#2e7d32" }}>
+                            Parsed ✓ Case ID: <strong>{form.caseId}</strong> | Client ID: <strong>{form.clientId}</strong>
+                        </Typography>
+                    )}
+                </Box>
+
                 {/* Flags */}
                 <Box sx={{ mt: 2 }}>
                     <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Flags</Typography>
-                    <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" sx={{ opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
+                    <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap"
+                           sx={{ opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
                         <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={!!form.medicaid}
-                                    onChange={(e) => set("medicaid", e.target.checked)}
-                                    disabled={saving}
-                                    size="small"
-                                />
-                            }
+                            control={<Checkbox checked={!!form.medicaid} onChange={(e) => set("medicaid", e.target.checked)} disabled={saving} size="small" />}
                             label="Medicaid"
                         />
                         <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={!!form.paused}
-                                    onChange={(e) => set("paused", e.target.checked)}
-                                    disabled={saving}
-                                    size="small"
-                                />
-                            }
+                            control={<Checkbox checked={!!form.paused} onChange={(e) => set("paused", e.target.checked)} disabled={saving} size="small" />}
                             label="Paused"
                         />
                         <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={!!form.complex}
-                                    onChange={(e) => set("complex", e.target.checked)}
-                                    disabled={saving}
-                                    size="small"
-                                />
-                            }
+                            control={<Checkbox checked={!!form.complex} onChange={(e) => set("complex", e.target.checked)} disabled={saving} size="small" />}
                             label="Complex"
+                        />
+                        {/* NEW */}
+                        <FormControlLabel
+                            control={<Checkbox checked={!!form.bill} onChange={(e) => set("bill", e.target.checked)} disabled={saving} size="small" />}
+                            label="Bill"
+                        />
+                        <FormControlLabel
+                            control={<Checkbox checked={!!form.delivery} onChange={(e) => set("delivery", e.target.checked)} disabled={saving} size="small" />}
+                            label="Delivery"
                         />
                     </Stack>
 
-                    {/* Helper messages */}
                     {!!form.paused && (
                         <Alert severity="info" sx={{ mt: 1 }}>
                             This client is <strong>paused</strong> and should be excluded from new routes.
@@ -401,12 +475,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", opacity: saving ? 0.7 : 1, pointerEvents: saving ? "none" : "auto" }}>
                     {DAYS.map(d => (
                         <label key={d} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                            <input
-                                type="checkbox"
-                                checked={!!form.schedule?.[d]}
-                                onChange={(e) => setSched(d, e.target.checked)}
-                                disabled={saving}
-                            />
+                            <input type="checkbox" checked={!!form.schedule?.[d]} onChange={(e) => setSched(d, e.target.checked)} disabled={saving} />
                             {d.slice(0, 3).toUpperCase()}
                         </label>
                     ))}
@@ -418,15 +487,9 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                         <Typography variant="subtitle2">Location</Typography>
                         {(geoBusy || geoPersisting) && <LinearProgress sx={{ width: 120 }} />}
                         <Box sx={{ flex: 1 }} />
-                        <Button size="small" variant="outlined" onClick={tryAutoGeocode} disabled={geoBusy || saving}>
-                            Auto Geocode
-                        </Button>
-                        <Button size="small" onClick={openSuggestions} disabled={geoBusy || saving}>
-                            See Suggestions
-                        </Button>
-                        <Button size="small" onClick={() => setMapOpen(true)} disabled={geoBusy || saving}>
-                            Select on Map
-                        </Button>
+                        <Button size="small" variant="outlined" onClick={tryAutoGeocode} disabled={geoBusy || saving}>Auto Geocode</Button>
+                        <Button size="small" onClick={openSuggestions} disabled={geoBusy || saving}>See Suggestions</Button>
+                        <Button size="small" onClick={() => setMapOpen(true)} disabled={geoBusy || saving}>Select on Map</Button>
                     </Stack>
 
                     {geoSuccess && (
@@ -440,8 +503,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
 
                     {typeof form.lat === "number" && typeof form.lng === "number" && !geoSuccess ? (
                         <Typography variant="caption" sx={{ mt: 1, display: "block", color: "#2e7d32" }}>
-                            ✓ Geocoded: {form.lat.toFixed(6)}, {form.lng.toFixed(6)}
-                            {geoPersisting ? " (saving…)" : ""}
+                            ✓ Geocoded: {form.lat.toFixed(6)}, {form.lng.toFixed(6)}{geoPersisting ? " (saving…)" : ""}
                         </Typography>
                     ) : !geoSuccess ? (
                         <Typography variant="caption" sx={{ mt: 1, display: "block", opacity: 0.75 }}>
@@ -449,11 +511,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                         </Typography>
                     ) : null}
 
-                    {!!geoErr && (
-                        <Alert severity="error" sx={{ mt: 1 }}>
-                            {geoErr}
-                        </Alert>
-                    )}
+                    {!!geoErr && <Alert severity="error" sx={{ mt: 1 }}>{geoErr}</Alert>}
 
                     <Collapse in={candsOpen} unmountOnExit>
                         <Box sx={{ mt: 1, border: "1px dashed #ccc", borderRadius: 1, maxHeight: 220, overflow: "auto", margin: 0 }}>
@@ -461,10 +519,7 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                                 <List dense>
                                     {cands.map((c, idx) => (
                                         <ListItemButton key={idx} onClick={() => pickCandidate(c)} disabled={saving}>
-                                            <ListItemText
-                                                primary={c.label}
-                                                secondary={`${Number(c.lat).toFixed(5)}, ${Number(c.lng).toFixed(5)} — ${c.provider}`}
-                                            />
+                                            <ListItemText primary={c.label} secondary={`${Number(c.lat).toFixed(5)}, ${Number(c.lng).toFixed(5)} — ${c.provider}`} />
                                         </ListItemButton>
                                     ))}
                                 </List>
@@ -485,7 +540,13 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                         onClick={handleSave}
                         disabled={createDisabled}
                         aria-busy={saving ? "true" : undefined}
-                        title={createDisabled && !form.id ? "Please geocode the address first" : undefined}
+                        title={
+                            !form.caseUrl
+                                ? "Enter the Unite Us Case URL"
+                                : (!validCaseUrl ? "Case URL is invalid"
+                                    : (!form.id && !(typeof form.lat === "number" && typeof form.lng === "number")
+                                        ? "Please geocode the address first" : undefined))
+                        }
                     >
                         {saving ? "Saving…" : (form.id ? "Save Changes" : "Create")}
                     </Button>

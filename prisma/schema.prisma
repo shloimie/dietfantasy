@@ -38,9 +38,10 @@ model User {
   visits     Json      @default("[]")
   sign_token String?   @unique
 
-  // ✅ make sure these exist in Prisma too
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  bill      Boolean  @default(true)
+  delivery  Boolean  @default(true)
 
   signatures Signature[]
 

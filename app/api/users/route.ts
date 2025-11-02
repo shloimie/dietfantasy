@@ -23,22 +23,19 @@ const parseBillings = (raw: any) => {
     if (raw == null) return [];
     try {
         if (typeof raw === "string") {
-            const trimmed = raw.trim();
-            if (!trimmed) return [];
-            return JSON.parse(trimmed);
+            const t = raw.trim();
+            if (!t) return [];
+            return JSON.parse(t);
         }
-        // already JSON (array/object)
-        return raw;
+        return raw; // already JSON
     } catch {
-        // if malformed, keep as plain text so we don't lose data
-        return String(raw);
+        return String(raw); // preserve malformed content as text
     }
 };
 
 // ---------- GET /api/users
 export async function GET() {
     try {
-        // Expected schema path
         const list = await prisma.user.findMany({
             orderBy: [{ city: "asc" }, { last: "asc" }],
             select: {
@@ -56,12 +53,19 @@ export async function GET() {
                 medicaid: true,
                 paused: true,
                 complex: true,
+
+
+                bill: true,
+                delivery: true,
+
                 // geo
                 lat: true,
                 lng: true,
+
                 // timestamps
                 createdAt: true,
                 updatedAt: true,
+
                 // schedule
                 schedule: {
                     select: {
@@ -74,19 +78,17 @@ export async function GET() {
                         sunday: true,
                     },
                 },
-                // existing JSON
-                visits: true,
 
-                // ✅ NEW FIELDS
+                // JSON + Unite Us IDs
+                visits: true,
+                billings: true,
                 clientId: true,
                 caseId: true,
-                billings: true,
             },
         });
         return NextResponse.json(list, { status: 200 });
     } catch (e: any) {
-        // Fallback if migration hasn't run yet
-        console.error("GET /api/users failed (with new fields). Falling back without them.", e?.message || e);
+        console.error("GET /api/users failed (with new fields). Falling back.", e?.message || e);
         try {
             const list = await prisma.user.findMany({
                 orderBy: [{ city: "asc" }, { last: "asc" }],
@@ -121,22 +123,20 @@ export async function GET() {
                     visits: true,
                 },
             });
-            // Return JSON with null/[] placeholders so UI has consistent keys
             const hydrated = list.map((u: any) => ({
                 ...u,
                 createdAt: null,
                 updatedAt: null,
+                bill: true,       // default in UI
+                delivery: true,   // default in UI
+                billings: [],
                 clientId: null,
                 caseId: null,
-                billings: [],
             }));
             return NextResponse.json(hydrated, { status: 200 });
         } catch (e2: any) {
             console.error("GET /api/users fallback also failed:", e2?.message || e2);
-            return NextResponse.json(
-                { error: "Failed to load users" },
-                { status: 500 }
-            );
+            return NextResponse.json({ error: "Failed to load users" }, { status: 500 });
         }
     }
 }
@@ -147,16 +147,19 @@ export async function POST(req: Request) {
         const b = await req.json();
         const scheduleInput = sanitizeSchedule(b.schedule);
 
-        // Accept both camelCase and snake_case for new fields
+        // Existing optional fields
         const clientId: string | null = (b.clientId ?? b.client_id) ?? null;
         const caseId: string | null = (b.caseId ?? b.case_id) ?? null;
-        const billings = parseBillings(b.billings ?? b.Billings ?? b.billing ?? b.billing_json);
+        const billings = parseBillings(b.billings ?? b.billing ?? b.billing_json ?? b.Billings);
 
-        // 1) Accept coords from client if provided (supports both name styles)
+        // NEW booleans (default true)
+        const bill: boolean = b.bill == null ? true : !!b.bill;
+        const delivery: boolean = b.delivery == null ? true : !!b.delivery;
+
+        // coords
         let bodyLat = num(b.lat ?? b.latitude);
         let bodyLng = num(b.lng ?? b.longitude);
 
-        // 2) If missing, geocode the address
         if (bodyLat == null || bodyLng == null) {
             const { lat, lng } = await geocodeIfNeeded({
                 address: b.address,
@@ -169,7 +172,6 @@ export async function POST(req: Request) {
             bodyLng = num(lng);
         }
 
-        // 3) Create user (write new fields)
         const created = await prisma.user.create({
             data: {
                 first: b.first,
@@ -182,9 +184,14 @@ export async function POST(req: Request) {
                 zip: b.zip ?? null,
                 state: b.state,
                 phone: b.phone,
+
                 medicaid: !!b.medicaid,
                 paused: !!b.paused,
                 complex: !!b.complex,
+
+                // NEW
+                bill,
+                delivery,
 
                 schedule: { create: scheduleInput },
 
@@ -192,17 +199,14 @@ export async function POST(req: Request) {
                 lng: bodyLng,
                 latitude: bodyLat,
                 longitude: bodyLng,
-
                 geocodedAt: bodyLat != null && bodyLng != null ? new Date() : null,
 
-                // ✅ NEW FIELDS
+                // IDs/JSON
                 clientId,
                 caseId,
                 billings,
             },
-            include: {
-                schedule: true,
-            },
+            include: { schedule: true },
         });
 
         return NextResponse.json(created, { status: 201 });
