@@ -55,7 +55,6 @@ function parseUniteUsUrl(urlStr: string) {
     try {
         const u = new URL(urlStr);
         const path = u.pathname.replace(/\/+$/, ""); // remove trailing slash
-        // Regex captures the two UUID-like segments after /cases/open/ and /contact/
         const m =
             /\/cases\/open\/([0-9a-fA-F-]{10,})\/contact\/([0-9a-fA-F-]{10,})$/.exec(
                 path
@@ -69,13 +68,23 @@ function parseUniteUsUrl(urlStr: string) {
 }
 
 type IdentifyInput = {
+    // NEW: direct DB id (optional; when present we skip fuzzy matching)
+    userId?: number | string;
+
+    // Legacy fuzzy-match inputs (optional when userId is given)
     name?: string | null;
     address?: string | null;
     phone?: string | null;
-    url: string;
+
+    // Where to read case/client IDs from (optional if caseId/clientId provided)
+    url?: string;
+
+    // NEW: allow client to pass parsed IDs directly (optional; else parse url)
+    caseId?: string | null;
+    clientId?: string | null;
 };
 
-async function findUser(
+async function findUserByFuzzy(
     { name, address, phone }: IdentifyInput,
 ): Promise<{ userId: number; matchedBy: "name" | "phone" | "address"; debug: any }> {
     // We’ll try to find a *single* user, in order: name → phone → address.
@@ -86,7 +95,7 @@ async function findUser(
     const addrNorm = normalizeAddress(address);
 
     // Helper to narrow a candidate list with phone/address if available
-    const narrow = (cands: { id: number; phone: string | null; address: string; city: string; zip: string | null }[]) => {
+    const narrow = (cands: { id: number; phone: string | null; address: string; city: string | null; zip: string | null }[]) => {
         let list = [...cands];
 
         if (phoneDigits.length >= 7) {
@@ -95,8 +104,6 @@ async function findUser(
         }
 
         if (addrNorm) {
-            // Require that the normalized DB address contains the primary street tokens
-            // Extract number + first word as a minimal fingerprint if possible
             const tokens = addrNorm.split(" ");
             const num = tokens.find(t => /^\d+$/.test(t));
             const street = tokens.find(t => /^[a-z]/.test(t));
@@ -147,16 +154,11 @@ async function findUser(
     // 2) Try by PHONE (ends with last 7–10 digits)
     if (phoneDigits.length >= 7) {
         const last7 = phoneDigits.slice(-7);
-        // We can’t easily do “endsWith digitsOnly(phone)” in SQL; fetch limited set by a broad contains/endsWith on raw,
-        // then narrow in JS with a digits-only comparison.
         const possible = await prisma.user.findMany({
-            where: {
-                phone: { endsWith: last7 }, // helps index a bit; we still verify in JS
-            },
+            where: { phone: { endsWith: last7 } },
             select: { id: true, phone: true, first: true, last: true, address: true, city: true, zip: true },
             take: 50,
         });
-
         const byPhone = possible.filter(u => digitsOnly(u.phone).endsWith(last7));
 
         if (byPhone.length === 1) {
@@ -171,34 +173,23 @@ async function findUser(
         }
     }
 
-    // 3) Try by ADDRESS (loose contains on normalized address)
+    // 3) Try by ADDRESS
     if (addrNorm) {
-        // Use contains on a key fragment (street number + first token) to keep the candidate set small.
         const tokens = addrNorm.split(" ");
         const num = tokens.find(t => /^\d+$/.test(t));
         const street = tokens.find(t => /^[a-z]/.test(t));
         let byAddr = await prisma.user.findMany({
             where: num && street
-                ? {
-                    AND: [
-                        { address: { contains: num, mode: "insensitive" } },
-                        { address: { contains: street, mode: "insensitive" } },
-                    ],
-                }
-                : {
-                    address: { contains: tokens.slice(0, 3).join(" "), mode: "insensitive" },
-                },
+                ? { AND: [{ address: { contains: num, mode: "insensitive" } }, { address: { contains: street, mode: "insensitive" } }] }
+                : { address: { contains: tokens.slice(0, 3).join(" "), mode: "insensitive" } },
             select: { id: true, phone: true, address: true, city: true, zip: true },
             take: 100,
         });
 
-        // JS-side normalization check
         byAddr = byAddr.filter(c => {
             const dbAddr = normalizeAddress(`${c.address} ${c.city ?? ""} ${c.zip ?? ""}`);
-            // require both num and street if present
             if (num && !dbAddr.includes(num)) return false;
             if (street && !dbAddr.includes(street)) return false;
-            // otherwise allow loose contains
             return true;
         });
 
@@ -206,7 +197,7 @@ async function findUser(
             return { userId: byAddr[0].id, matchedBy: "address", debug: { initial: "address", candidates: byAddr.length } };
         }
         if (byAddr.length > 1) {
-            // Narrow further with phone if provided
+            const phoneDigits = digitsOnly(phone);
             const narrowed = phoneDigits.length >= 7 ? byAddr.filter(c => digitsOnly(c.phone).endsWith(phoneDigits.slice(-7))) : byAddr;
             if (narrowed.length === 1) {
                 return { userId: narrowed[0].id, matchedBy: "address", debug: { initial: "address", candidates: byAddr.length, narrowed: narrowed.length } };
@@ -227,48 +218,83 @@ export async function POST(req: NextRequest) {
             return json(400, { ok: false, code: "bad_request", message: "Expected JSON body." });
         }
 
-        const { name, address, phone, url } = body;
+        let { userId, name, address, phone, url, caseId, clientId } = body;
 
-        if (!url || typeof url !== "string") {
-            return json(400, { ok: false, code: "missing_url", message: "Field 'url' is required." });
+        // 1) Determine which user to update
+        let targetUserId: number | null = null;
+
+        if (userId != null && userId !== "") {
+            const idNum = Number(userId);
+            if (!Number.isFinite(idNum) || idNum <= 0) {
+                return json(400, { ok: false, code: "bad_user_id", message: "Invalid userId." });
+            }
+            const exists = await prisma.user.findUnique({ where: { id: idNum }, select: { id: true } });
+            if (!exists) return json(404, { ok: false, code: "user_not_found", message: `User ${idNum} not found.` });
+            targetUserId = idNum;
+        } else {
+            // Fallback to fuzzy identification
+            try {
+                const identified = await findUserByFuzzy({ name, address, phone });
+                targetUserId = identified.userId;
+            } catch (e: any) {
+                const msg = String(e?.message || e || "Identification failed");
+                const code =
+                    msg.startsWith("Ambiguous") ? "ambiguous" :
+                        msg.includes("No matching user") ? "not_found" : "identify_error";
+                return json(404, { ok: false, code, message: msg, detail: { name, address, phone } });
+            }
         }
 
-        // Identify the user
-        let identified;
-        try {
-            identified = await findUser({ name, address, phone, url });
-        } catch (e: any) {
-            const msg = String(e?.message || e || "Identification failed");
-            const code =
-                msg.startsWith("Ambiguous") ? "ambiguous" :
-                    msg.includes("No matching user") ? "not_found" : "identify_error";
-            return json(404, { ok: false, code, message: msg, detail: { name, address, phone } });
+        // 2) Determine case/client IDs
+        //    - If payload provides both {caseId, clientId}, trust them.
+        //    - Else, require a parsable URL.
+        let resolvedCaseId = (caseId || "").trim();
+        let resolvedClientId = (clientId || "").trim();
+
+        if (!resolvedCaseId || !resolvedClientId) {
+            if (!url || typeof url !== "string") {
+                return json(400, {
+                    ok: false,
+                    code: "missing_source",
+                    message: "Provide either {caseId, clientId} or a valid 'url' to parse.",
+                });
+            }
+            const parsed = parseUniteUsUrl(url);
+            if (!parsed) {
+                return json(422, {
+                    ok: false,
+                    code: "invalid_url_format",
+                    message: "URL did not match expected Unite Us pattern (/cases/open/{caseId}/contact/{clientId}).",
+                });
+            }
+            resolvedCaseId = parsed.caseId;
+            resolvedClientId = parsed.clientId;
         }
 
-        // Parse Unite Us URL
-        const parsed = parseUniteUsUrl(url);
-        if (!parsed) {
+        // Quick sanity checks
+        if (resolvedCaseId.length < 10 || resolvedClientId.length < 10) {
             return json(422, {
                 ok: false,
-                code: "invalid_url_format",
-                message: "URL did not match expected Unite Us pattern (/cases/open/{caseId}/contact/{clientId}).",
+                code: "ids_too_short",
+                message: "Parsed/provided IDs look too short.",
+                detail: { caseId: resolvedCaseId, clientId: resolvedClientId }
             });
         }
 
-        // Save to DB
+        // 3) Save to DB
         await prisma.user.update({
-            where: { id: identified.userId },
+            where: { id: targetUserId! },
             data: {
-                caseId: parsed.caseId,
-                clientId: parsed.clientId,
+                caseId: resolvedCaseId,
+                clientId: resolvedClientId,
             },
         });
 
         return json(200, {
             ok: true,
-            userId: identified.userId,
-            matchedBy: identified.matchedBy,
-            saved: { caseId: parsed.caseId, clientId: parsed.clientId },
+            userId: targetUserId,
+            matchedBy: userId ? "direct_id" : "fuzzy",
+            saved: { caseId: resolvedCaseId, clientId: resolvedClientId },
         });
     } catch (err: any) {
         console.error("[/api/ext/identify] Unhandled error:", err);
