@@ -4,10 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="maybe restore css">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="better ext search (only)">
+      <change afterPath="$PROJECT_DIR$/app/api/ext/identify/route.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/optimize/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/optimize/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/components/UsersTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/UsersTable.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/prisma/schema.prisma" beforeDir="false" afterPath="$PROJECT_DIR$/prisma/schema.prisma" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -390,7 +391,31 @@
       <option name="project" value="LOCAL" />
       <updated>1761599167484</updated>
     </task>
-    <option name="localTasksCounter" value="37" />
+    <task id="LOCAL-00037" summary="optimize routes">
+      <option name="closed" value="true" />
+      <created>1761755542139</created>
+      <option name="number" value="00037" />
+      <option name="presentableId" value="LOCAL-00037" />
+      <option name="project" value="LOCAL" />
+      <updated>1761755542139</updated>
+    </task>
+    <task id="LOCAL-00038" summary="save as is button">
+      <option name="closed" value="true" />
+      <created>1761837248263</created>
+      <option name="number" value="00038" />
+      <option name="presentableId" value="LOCAL-00038" />
+      <option name="project" value="LOCAL" />
+      <updated>1761837248263</updated>
+    </task>
+    <task id="LOCAL-00039" summary="better ext search (only)">
+      <option name="closed" value="true" />
+      <created>1761919350298</created>
+      <option name="number" value="00039" />
+      <option name="presentableId" value="LOCAL-00039" />
+      <option name="project" value="LOCAL" />
+      <updated>1761919350298</updated>
+    </task>
+    <option name="localTasksCounter" value="40" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -408,9 +433,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="hell" />
-    <MESSAGE value="hell2" />
-    <MESSAGE value="extention working" />
     <MESSAGE value="labels, geocoding and other bugs" />
     <MESSAGE value="before leaflet" />
     <MESSAGE value=" leaflet slecetor" />
@@ -433,6 +455,9 @@
     <MESSAGE value="current" />
     <MESSAGE value="new sigs file" />
     <MESSAGE value="maybe restore css" />
-    <option name="LAST_COMMIT_MESSAGE" value="maybe restore css" />
+    <MESSAGE value="optimize routes" />
+    <MESSAGE value="save as is button" />
+    <MESSAGE value="better ext search (only)" />
+    <option name="LAST_COMMIT_MESSAGE" value="better ext search (only)" />
   </component>
 </project>

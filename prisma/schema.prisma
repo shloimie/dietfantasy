@@ -25,6 +25,10 @@ model User {
   paused   Boolean @default(false)
   complex  Boolean @default(false)
 
+  clientId String?
+  caseId   String?
+  billings Json    @default("[]")
+
   schedule   Schedule?
   latitude   Float?
   longitude  Float?
@@ -40,6 +44,8 @@ model User {
 
   signatures Signature[]
 
+  @@index([clientId])
+  @@index([caseId])
   @@map("User")
 }
 
