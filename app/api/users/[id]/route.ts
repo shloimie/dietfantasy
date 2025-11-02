@@ -27,6 +27,20 @@ function sanitizeSchedule(input: any) {
         sunday:    s.sunday    ?? true,
     };
 }
+// ⬇️ add near top (reuse same helper as POST)
+const parseBillings = (raw: any) => {
+    if (raw == null) return [];
+    try {
+        if (typeof raw === "string") {
+            const t = raw.trim();
+            if (!t) return [];
+            return JSON.parse(t);
+        }
+        return raw; // already JSON
+    } catch {
+        return String(raw); // preserve malformed content as text
+    }
+};
 
 const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const str = (v: any) => (v == null ? null : String(v));
@@ -46,12 +60,33 @@ export async function GET(
 }
 
 /* ====================== PUT /api/users/[id] ====================== */
+/* ====================== PUT /api/users/[id] ====================== */
 export async function PUT(
     req: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    // --- helpers local to this handler ---
+    const parseBillings = (raw: any) => {
+        if (raw == null) return [];
+        try {
+            if (typeof raw === "string") {
+                const t = raw.trim();
+                if (!t) return [];
+                return JSON.parse(t);
+            }
+            return raw; // already JSON
+        } catch {
+            // preserve malformed content so you can see/debug it later
+            return String(raw);
+        }
+    };
+
     const { id } = await params;
     const userId = Number(id);
+    if (!Number.isFinite(userId)) {
+        return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
     const b = await req.json();
     const scheduleInput = sanitizeSchedule(b.schedule);
 
@@ -76,7 +111,12 @@ export async function PUT(
         },
     });
 
-    // Detect address/phone/coords changes
+    // if user not found
+    if (!current) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    // Detect address/phone changes
     const addressChanged =
         (str(current?.address) ?? "") !== (str(b.address) ?? "") ||
         (str(current?.apt) ?? "") !== (str(b.apt) ?? "") ||
@@ -116,31 +156,67 @@ export async function PUT(
             ? false
             : finalLat != null && finalLng != null;
 
+    // ===== NEW FIELDS =====
+    // Accept both camel and snake for IDs; allow null to clear, undefined to keep unchanged
+    const clientId: string | null | undefined = b.clientId ?? b.client_id;
+    const caseId: string | null | undefined = b.caseId ?? b.case_id;
+
+    // Booleans: only update if provided; otherwise leave as-is
+    const bill: boolean | undefined = b.bill === undefined ? undefined : !!b.bill;
+    const delivery: boolean | undefined =
+        b.delivery === undefined ? undefined : !!b.delivery;
+
+    // Billings can be array or JSON string; only set if any key provided
+    const billings =
+        b.billings === undefined &&
+        b.billing === undefined &&
+        b.billing_json === undefined &&
+        b.Billings === undefined
+            ? undefined
+            : parseBillings(b.billings ?? b.billing ?? b.billing_json ?? b.Billings);
+
+    // Perform the update (use undefined to leave fields unchanged)
     const updated = await prisma.user.update({
         where: { id: userId },
         data: {
-            first: b.first,
-            last: b.last,
-            address: b.address,
-            apt: b.apt ?? null,
-            city: b.city,
-            dislikes: b.dislikes ?? null,
-            county: b.county ?? null,
-            zip: b.zip ?? null,
-            state: b.state,
-            phone: b.phone,
-            medicaid: !!b.medicaid,
-            paused: !!b.paused,
-            complex: !!b.complex,
-            schedule: {
-                upsert: { create: scheduleInput, update: scheduleInput },
-            },
+            // core text fields (set to undefined to keep unchanged if not provided)
+            first: b.first ?? undefined,
+            last: b.last ?? undefined,
+            address: b.address ?? undefined,
+            apt: b.apt === undefined ? undefined : b.apt ?? null,
+            city: b.city ?? undefined,
+            dislikes: b.dislikes === undefined ? undefined : b.dislikes ?? null,
+            county: b.county === undefined ? undefined : b.county ?? null,
+            zip: b.zip === undefined ? undefined : b.zip ?? null,
+            state: b.state ?? undefined,
+            phone: b.phone ?? undefined,
 
-            // write coords to BOTH field name styles
-            latitude: finalLat,
-            longitude: finalLng,
-            lat: finalLat,
-            lng: finalLng,
+            // flags
+            medicaid: b.medicaid === undefined ? undefined : !!b.medicaid,
+            paused: b.paused === undefined ? undefined : !!b.paused,
+            complex: b.complex === undefined ? undefined : !!b.complex,
+
+            // ===== write new fields when present =====
+            bill,          // boolean | undefined
+            delivery,      // boolean | undefined
+            clientId,      // string | null | undefined
+            caseId,        // string | null | undefined
+            billings,      // Json | string (malformed preserved) | undefined
+
+            // schedule upsert if provided
+            ...(b.schedule
+                ? {
+                    schedule: {
+                        upsert: { create: scheduleInput, update: scheduleInput },
+                    },
+                }
+                : {}),
+
+            // coords to BOTH field styles (if we resolved them)
+            latitude: finalLat == null ? undefined : finalLat,
+            longitude: finalLng == null ? undefined : finalLng,
+            lat: finalLat == null ? undefined : finalLat,
+            lng: finalLng == null ? undefined : finalLng,
 
             geocodedAt: shouldSetGeocodedAt
                 ? new Date()
@@ -148,15 +224,24 @@ export async function PUT(
                     ? null
                     : current?.geocodedAt ?? null,
         },
-        include: { schedule: true },
+        include: {
+            schedule: {
+                select: {
+                    monday: true,
+                    tuesday: true,
+                    wednesday: true,
+                    thursday: true,
+                    friday: true,
+                    saturday: true,
+                    sunday: true,
+                },
+            },
+        },
     });
 
     // === Cascade denormalized fields to Stops when needed ===
     const shouldCascade =
-        cascadeStopsFlag ||
-        addressChanged ||
-        phoneChanged ||
-        (finalLat != null && finalLng != null);
+        cascadeStopsFlag || addressChanged || phoneChanged || (finalLat != null && finalLng != null);
 
     if (shouldCascade) {
         const stopData: Record<string, any> = {};

@@ -95,7 +95,7 @@ function drawBadgeAbove(doc, x, y, text, colorRGB) {
     const prevSize = doc.getFontSize();
     const prevColor = doc.getTextColor();
     try {
-        doc.setFontSize(6);
+        doc.setFontSize(9);
         doc.setTextColor(...colorRGB);
         const xx = x + PAD_L;
         const yy = y + PAD_T - 0.08;

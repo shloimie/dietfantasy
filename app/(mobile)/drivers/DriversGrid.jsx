@@ -14,6 +14,28 @@ async function fetchSignStatusClient() {
     return res.json();
 }
 
+/** Build a normalized address key that ignores apt/unit and collapses spacing/case. */
+function makeAddressKey(stop) {
+    if (!stop) return "";
+    const addrRaw = String(stop.address || "").toLowerCase();
+
+    // Strip common inline unit markers if they appear inside address line itself
+    // (e.g., "123 Main St Apt 5", "Ste 2", "Unit B", "#4").
+    const addrNoUnit = addrRaw
+        .replace(/\b(apt|apartment|ste|suite|unit|fl|floor)\b\.?\s*[a-z0-9-]+/gi, "")
+        .replace(/#\s*\w+/g, "")
+        .replace(/[.,]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const city = String(stop.city || "").toLowerCase().trim();
+    const state = String(stop.state || "").toLowerCase().trim();
+    const zip = String(stop.zip || "").toLowerCase().trim();
+
+    // Key excludes stop.apt on purpose (we’re “ignoring apt#”)
+    return [addrNoUnit, city, state, zip].filter(Boolean).join("|");
+}
+
 export default function DriversGrid({ drivers = [], allStops = [] }) {
     const [sigRows, setSigRows] = useState([]);
 
@@ -46,12 +68,23 @@ export default function DriversGrid({ drivers = [], allStops = [] }) {
         <div className="grid">
             {drivers.map((d) => {
                 const cardStops = getStopsForDriver(d);
+
                 const total = d.totalStops ?? (d.stopIds?.length ?? cardStops.length ?? 0);
-                const done = d.completedStops ?? cardStops.filter((s) => !!s.completed).length;
+                const done = d.completedStops ?? cardStops.filter((s) => !!s?.completed).length;
                 const pct = total ? (done / total) * 100 : 0;
 
-                const sigUsersDone = cardStops.filter((s) => (sigMap.get(Number(s.userId)) ?? 0) >= 5).length;
+                const sigUsersDone = cardStops.filter((s) => (sigMap.get(Number(s?.userId)) ?? 0) >= 5).length;
                 const pctSigs = total ? (sigUsersDone / total) * 100 : 0;
+
+                // Unique addresses for this driver (ignoring apt#)
+                const uniqueAddrCount = (() => {
+                    const set = new Set();
+                    for (const s of cardStops) {
+                        const key = makeAddressKey(s);
+                        if (key) set.add(key);
+                    }
+                    return set.size;
+                })();
 
                 const color = d.color?.trim() || "#3665F3";
 
@@ -74,9 +107,13 @@ export default function DriversGrid({ drivers = [], allStops = [] }) {
                                             <h2 className="bold" style={{ fontSize: 18 }}>{d.name}</h2>
                                             <ChevronRight className="muted" />
                                         </div>
+
+                                        {/* Replaced Route # with unique address count */}
                                         <div className="flex muted" style={{ marginTop: 2 }}>
                                             <Hash style={{ width: 16, height: 16 }} />
-                                            <span>Route {d.routeNumber}</span>
+                                            <span>
+                                                {uniqueAddrCount} {uniqueAddrCount === 1 ? "address" : "addresses"}
+                                            </span>
                                         </div>
                                     </div>
                                 </div>
