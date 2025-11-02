@@ -1,3 +1,4 @@
+// components/UsersTable.jsx
 "use client";
 
 import React from "react";
@@ -36,6 +37,20 @@ export default function UsersTable({
     const [copiedUsers, setCopiedUsers] = React.useState({});
     const [loadingUsers, setLoadingUsers] = React.useState({});
 
+    // ===== Helpers (normalizers) =====
+    const getClientId = (u) =>
+        u?.clientId ?? u?.client_id ?? u?.ClientId ?? u?.clientID ?? null;
+    const getCaseId = (u) =>
+        u?.caseId ?? u?.case_id ?? u?.CaseId ?? u?.caseID ?? null;
+
+    const stringifyBillings = (b) => {
+        try {
+            return typeof b === "string" ? b : JSON.stringify(b ?? []);
+        } catch {
+            return String(b ?? "");
+        }
+    };
+
     React.useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -61,18 +76,15 @@ export default function UsersTable({
             let hay = [
                 u.first, u.last, u.address, u.apt, u.city, u.county, u.zip, u.state,
                 u.phone, u.dislikes, u.medicaid ? "yes" : "no",
-                // include new IDs in search text (not required, but handy)
-                u.clientId, u.caseId
+                // include new IDs in search text
+                getClientId(u), getCaseId(u),
             ]
                 .map((v) => (v == null ? "" : String(v)))
                 .join(" ")
                 .toLowerCase();
 
-            // also include a compact JSON string for billings (so searches can find it)
-            try {
-                const b = typeof u.billings === "string" ? u.billings : JSON.stringify(u.billings ?? "");
-                hay += " " + (b ?? "");
-            } catch {}
+            // include a compact JSON string for billings
+            hay += " " + stringifyBillings(u.billings);
 
             if (u?.schedule) {
                 const k = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
@@ -92,10 +104,8 @@ export default function UsersTable({
     // sort helpers
     const getSigCount = (u) => Number(sigCount[u.id] ?? 0);
     const getDate = (v) => (v ? new Date(v).getTime() : 0);
-
     const billingsLen = (b) => {
         if (Array.isArray(b)) return b.length;
-        // If string or object, measure JSON/text length to get consistent ordering
         try {
             if (typeof b === "string") return b.length;
             return JSON.stringify(b ?? "").length;
@@ -126,8 +136,7 @@ export default function UsersTable({
             const arr = [...filtered].sort((a, b) => {
                 const av = getDate(a.createdAt);
                 const bv = getDate(b.createdAt);
-                // default: newest first
-                return sortAsc ? av - bv : bv - av;
+                return sortAsc ? av - bv : bv - av; // default: newest first
             });
             return arr;
         }
@@ -137,7 +146,6 @@ export default function UsersTable({
                 const av = billingsLen(a.billings);
                 const bv = billingsLen(b.billings);
                 if (av !== bv) return sortAsc ? av - bv : bv - av;
-                // tie-breaker by name
                 const lastCmp = String(a.last ?? "").localeCompare(String(b.last ?? ""), undefined, { sensitivity: "base" });
                 if (lastCmp) return lastCmp;
                 return String(a.first ?? "").localeCompare(String(b.first ?? ""), undefined, { sensitivity: "base" });
@@ -166,7 +174,7 @@ export default function UsersTable({
     // =========================
     const indexCol = { key: "__rownum", label: "#", sort: [] };
 
-    // Base (always visible): add Billings column
+    // Base (always visible): includes Billings column
     const baseCols = [
         { key: "name", label: "Name", sort: ["first", "last"] },
         { key: "sign", label: "SIGN", sort: ["signatures"] },
@@ -178,7 +186,7 @@ export default function UsersTable({
         { key: "actions", label: "", sort: [] },
     ];
 
-    // Detail shelf (hidden until expanded): add Client ID + Case ID
+    // Detail shelf (hidden until expanded): Client ID + Case ID
     const detailCols = [
         { key: "complex", label: "Complex", sort: ["complex"] },
         { key: "paused", label: "Paused", sort: ["paused"] },
@@ -197,10 +205,6 @@ export default function UsersTable({
 
     const columns = expanded ? [indexCol, ...baseCols, ...detailCols] : [indexCol, ...baseCols];
     const baseCount = 1 + baseCols.length;
-
-    const SortGlyph = ({ active }) =>
-        active ? (sortAsc ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)
-            : (<UnfoldMoreIcon fontSize="inherit" />);
 
     const setSort = (k) => {
         setSortAsc((prev) => (k === sortKey ? !prev : true));
@@ -393,14 +397,6 @@ export default function UsersTable({
                     {sorted.map((u, idx) => {
                         const cityColor = getCityColor(u.city) || undefined;
 
-                        const stringifyBillings = (b) => {
-                            try {
-                                return typeof b === "string" ? b : JSON.stringify(b ?? []);
-                            } catch {
-                                return String(b ?? "");
-                            }
-                        };
-
                         const cells = {
                             __rownum: (
                                 <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", opacity: 0.85, fontWeight: 700 }}>
@@ -421,7 +417,6 @@ export default function UsersTable({
                                 </div>
                             ),
                             dislikes: <div style={{ ...wrap, whiteSpace: "pre-wrap" }}>{u.dislikes ?? ""}</div>,
-                            // NEW: billings shown as text
                             billings: (
                                 <div style={{ ...wrap, ...mono }}>
                                     {stringifyBillings(u.billings)}
@@ -468,9 +463,9 @@ export default function UsersTable({
                                 </div>
                             ),
                             createdAt: <div style={{ ...wrap, opacity: 0.8 }}>{fmtCreated(u.createdAt)}</div>,
-                            // NEW hidden detail fields
-                            clientId: <div style={{ ...wrap, ...mono }}>{u.clientId ?? "—"}</div>,
-                            caseId: <div style={{ ...wrap, ...mono }}>{u.caseId ?? "—"}</div>,
+                            // hidden detail fields
+                            clientId: <div style={{ ...wrap, ...mono }}>{getClientId(u) ?? "—"}</div>,
+                            caseId:   <div style={{ ...wrap, ...mono }}>{getCaseId(u) ?? "—"}</div>,
                         };
 
                         return (
