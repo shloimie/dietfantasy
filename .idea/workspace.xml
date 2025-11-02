@@ -5,11 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="new vars (not wired up + modal">
+      <change afterPath="$PROJECT_DIR$/app/api/ext/users/route.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/users/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/users/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/UserModal.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/UserModal.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/UsersTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/UsersTable.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/prisma/schema.prisma" beforeDir="false" afterPath="$PROJECT_DIR$/prisma/schema.prisma" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -432,7 +429,15 @@
       <option name="project" value="LOCAL" />
       <updated>1762097076120</updated>
     </task>
-    <option name="localTasksCounter" value="42" />
+    <task id="LOCAL-00042" summary="new vars (not wired up + modal">
+      <option name="closed" value="true" />
+      <created>1762104498919</created>
+      <option name="number" value="00042" />
+      <option name="presentableId" value="LOCAL-00042" />
+      <option name="project" value="LOCAL" />
+      <updated>1762104498919</updated>
+    </task>
+    <option name="localTasksCounter" value="43" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
