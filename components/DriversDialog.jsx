@@ -601,6 +601,109 @@ export default function DriversDialog({
         return { enrichedSorted, colorsSorted };
     }, [routes, routeStops, driverColors]);
 
+    // Add a new driver
+    async function handleAddDriver() {
+        setBusy(true);
+        try {
+            const res = await fetch("/api/route/add-driver", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ day: selectedDay }),
+            });
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.error || "Failed to add driver");
+            }
+            await loadRoutes();
+            await fetchRuns();
+            saveCurrentRun(true);
+            alert("Driver added successfully");
+        } catch (e) {
+            console.error("Add driver failed:", e);
+            alert("Failed to add driver: " + (e.message || "Unknown error"));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // Remove a driver
+    async function handleRemoveDriver() {
+        // Get list of drivers (excluding Driver 0)
+        const removableDrivers = routes.filter(r => {
+            const isDriver0 = /driver\s+0/i.test(r.name || "");
+            return !isDriver0;
+        });
+
+        if (removableDrivers.length === 0) {
+            alert("No drivers to remove");
+            return;
+        }
+
+        // Show selection dialog
+        const driverNames = removableDrivers.map((r, idx) => `${idx + 1}. ${r.name} (${r.stops?.length || 0} stops)`).join("\n");
+        const selection = window.prompt(
+            `Select driver to remove (enter number):\n${driverNames}`,
+            "1"
+        );
+
+        if (!selection) return; // User cancelled
+
+        const idx = parseInt(selection, 10) - 1;
+        if (idx < 0 || idx >= removableDrivers.length) {
+            alert("Invalid selection");
+            return;
+        }
+
+        const driverToRemove = removableDrivers[idx];
+
+        setBusy(true);
+        try {
+            const res = await fetch("/api/route/remove-driver", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ day: selectedDay, driverId: driverToRemove.driverId }),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || "Failed to remove driver");
+            }
+
+            await loadRoutes();
+            await fetchRuns();
+            saveCurrentRun(true);
+            alert("Driver removed successfully");
+        } catch (e) {
+            console.error("Remove driver failed:", e);
+            alert("Failed to remove driver: " + (e.message || "Unknown error"));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // Rename a driver
+    async function handleRenameDriver(driverId, newNumber) {
+        try {
+            const res = await fetch("/api/route/rename-driver", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ driverId, newNumber }),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || "Failed to rename driver");
+            }
+
+            await loadRoutes();
+            await fetchRuns();
+            saveCurrentRun(true);
+        } catch (e) {
+            console.error("Rename driver failed:", e);
+            throw e; // Re-throw so the map component can handle it
+        }
+    }
+
     // Apply a selected run
     async function applyRun(id) {
         if (!id) return;
@@ -681,26 +784,52 @@ export default function DriversDialog({
                             </FormControl>
                         </Box>
 
-                        {/* CENTER: Save + Generate */}
-                        <Box sx={{ justifySelf: "center", display: "flex", gap: 1, flexWrap: "wrap" }}>
-                            <Button
-                                onClick={saveSnapshotNow}
-                                variant="outlined"
-                                disabled={busy || !hasRoutes}
-                                sx={{ fontWeight: 700, borderRadius: 2 }}
-                            >
-                                Save Snapshot
-                            </Button>
+                        {/* CENTER: Save + Generate + Driver Management */}
+                        <Box sx={{ justifySelf: "center", display: "flex", flexDirection: "column", gap: 1, alignItems: "center" }}>
+                            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                                <Button
+                                    onClick={saveSnapshotNow}
+                                    variant="outlined"
+                                    disabled={busy || !hasRoutes}
+                                    sx={{ fontWeight: 700, borderRadius: 2 }}
+                                >
+                                    Save Snapshot
+                                </Button>
 
-                            <Button
-                                onClick={regenerateRoutes}
-                                variant="contained"
-                                color="error"
-                                disabled={busy}
-                                sx={{ fontWeight: 700, borderRadius: 2 }}
-                            >
-                                Generate New Route
-                            </Button>
+                                <Button
+                                    onClick={regenerateRoutes}
+                                    variant="contained"
+                                    color="error"
+                                    disabled={busy}
+                                    sx={{ fontWeight: 700, borderRadius: 2 }}
+                                >
+                                    Generate New Route
+                                </Button>
+                            </Box>
+
+                            <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                                <Button
+                                    onClick={handleAddDriver}
+                                    variant="outlined"
+                                    size="small"
+                                    disabled={busy}
+                                    sx={{ borderRadius: 2 }}
+                                >
+                                    ➕ Add Driver
+                                </Button>
+                                <Button
+                                    onClick={handleRemoveDriver}
+                                    variant="outlined"
+                                    size="small"
+                                    disabled={busy || routes.length <= 1}
+                                    sx={{ borderRadius: 2 }}
+                                >
+                                    ➖ Remove Driver
+                                </Button>
+                                <Box sx={{ fontSize: 13, color: "#6b7280", ml: 1 }}>
+                                    Drivers: {routes.filter(r => !/driver\s+0/i.test(r.name || "")).length}
+                                </Box>
+                            </Box>
                         </Box>
 
                         {/* RIGHT: link */}
@@ -725,6 +854,7 @@ export default function DriversDialog({
                             drivers={mapDrivers}
                             unrouted={unrouted}
                             onReassign={handleReassign}
+                            onRenameDriver={handleRenameDriver}
                             busy={busy}
                             onExpose={(api) => { mapApiRef.current = api || null; }}
                             onComputedStats={(s) => setStats(s)}

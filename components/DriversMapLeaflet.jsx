@@ -406,6 +406,7 @@ export default function DriversMapLeaflet({
                                               drivers = [],
                                               unrouted = [],
                                               onReassign, // (stop, driverId)
+                                              onRenameDriver, // optional: (driverId, newNumber) => Promise
                                               onExpose, // optional
                                               initialCenter = [40.7128, -74.006],
                                               initialZoom = 10,
@@ -417,6 +418,10 @@ export default function DriversMapLeaflet({
     const mapRef = useRef(null);
     const [mapReady, setMapReady] = useState(false);
     const [didFitOnce, setDidFitOnce] = useState(false);
+
+    // Driver editing state
+    const [editingDriverId, setEditingDriverId] = useState(null);
+    const [editingNumber, setEditingNumber] = useState("");
 
     const onReassignRef = useRef(onReassign);
     useEffect(() => {
@@ -762,6 +767,65 @@ export default function DriversMapLeaflet({
         },
         [clickPickMode, openAssignForStop, toggleId]
     );
+
+    /* ------- driver editing ------- */
+    const startEditDriver = useCallback((driverId, currentName) => {
+        // Don't allow editing Driver 0
+        const isDriver0 = /driver\s+0/i.test(currentName || "");
+        if (isDriver0) return;
+
+        // Extract current number
+        const match = /driver\s+(\d+)/i.exec(currentName || "");
+        const currentNum = match ? match[1] : "";
+
+        setEditingDriverId(driverId);
+        setEditingNumber(currentNum);
+    }, []);
+
+    const cancelEditDriver = useCallback(() => {
+        setEditingDriverId(null);
+        setEditingNumber("");
+    }, []);
+
+    const saveEditDriver = useCallback(async () => {
+        if (!editingDriverId || !editingNumber.trim()) {
+            cancelEditDriver();
+            return;
+        }
+
+        const newNum = parseInt(editingNumber.trim(), 10);
+
+        // Validate
+        if (!Number.isInteger(newNum) || newNum < 1 || newNum > 99) {
+            alert("Driver number must be between 1 and 99");
+            return;
+        }
+
+        // Check for duplicates
+        const duplicate = sortedDrivers.find(d => {
+            const match = /driver\s+(\d+)/i.exec(d.name || "");
+            const num = match ? parseInt(match[1], 10) : -1;
+            return num === newNum && d.driverId !== editingDriverId;
+        });
+
+        if (duplicate) {
+            alert(`Driver ${newNum} already exists`);
+            return;
+        }
+
+        // Call the rename callback if provided
+        if (onRenameDriver) {
+            try {
+                await onRenameDriver(editingDriverId, newNum);
+                cancelEditDriver();
+            } catch (e) {
+                console.error("Rename failed:", e);
+                alert("Failed to rename driver: " + (e.message || "Unknown error"));
+            }
+        } else {
+            cancelEditDriver();
+        }
+    }, [editingDriverId, editingNumber, sortedDrivers, onRenameDriver, cancelEditDriver]);
 
     /* ------- Map ready / view ------- */
     const handleMapReady = useCallback(
@@ -1470,12 +1534,12 @@ export default function DriversMapLeaflet({
                         {indexItems.map((it) => {
                             const idNum = Number(it.driverId);
                             const active = driverFilter.has(idNum);
+                            const isEditing = editingDriverId === it.driverId;
+                            const isDriver0 = /driver\s+0/i.test(it.name || "");
+
                             return (
-                                <button
+                                <div
                                     key={it.driverId}
-                                    type="button"
-                                    onClick={() => toggleDriverFilter(it.driverId)}
-                                    title={active ? "Remove from filter" : "Show only this driver"}
                                     style={{
                                         display: "flex",
                                         alignItems: "center",
@@ -1487,7 +1551,6 @@ export default function DriversMapLeaflet({
                                         borderRadius: 10,
                                         border: active ? "1px solid #7db3ff" : "1px solid #ddd",
                                         background: active ? "#eef5ff" : "#fff",
-                                        cursor: "pointer",
                                     }}
                                 >
                                     <span
@@ -1497,30 +1560,111 @@ export default function DriversMapLeaflet({
                                             borderRadius: 4,
                                             background: it.color,
                                             border: "1px solid rgba(0,0,0,0.15)",
+                                            flexShrink: 0,
                                         }}
                                     />
-                                    <div
-                                        title={it.name}
-                                        style={{
-                                            flex: 1,
-                                            whiteSpace: "nowrap",
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            fontWeight: active ? 700 : 500,
-                                        }}
-                                    >
-                                        {it.name}
-                                    </div>
-                                    <div
-                                        style={{
-                                            fontVariantNumeric: "tabular-nums",
-                                            opacity: 0.85,
-                                            paddingLeft: 6,
-                                        }}
-                                    >
-                                        {it.count}
-                                    </div>
-                                </button>
+
+                                    {isEditing ? (
+                                        <>
+                                            <span style={{ fontSize: 12 }}>Driver</span>
+                                            <input
+                                                type="number"
+                                                value={editingNumber}
+                                                onChange={(e) => setEditingNumber(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter") saveEditDriver();
+                                                    if (e.key === "Escape") cancelEditDriver();
+                                                }}
+                                                autoFocus
+                                                style={{
+                                                    width: 50,
+                                                    padding: "2px 6px",
+                                                    fontSize: 13,
+                                                    border: "1px solid #ccc",
+                                                    borderRadius: 4,
+                                                }}
+                                            />
+                                            <button
+                                                onClick={saveEditDriver}
+                                                style={{
+                                                    padding: "2px 8px",
+                                                    fontSize: 12,
+                                                    border: "1px solid #2a7",
+                                                    borderRadius: 4,
+                                                    background: "#eaffea",
+                                                    cursor: "pointer",
+                                                }}
+                                            >
+                                                ✓
+                                            </button>
+                                            <button
+                                                onClick={cancelEditDriver}
+                                                style={{
+                                                    padding: "2px 8px",
+                                                    fontSize: 12,
+                                                    border: "1px solid #ccc",
+                                                    borderRadius: 4,
+                                                    background: "#f6f6f6",
+                                                    cursor: "pointer",
+                                                }}
+                                            >
+                                                ✕
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleDriverFilter(it.driverId)}
+                                                title={active ? "Remove from filter" : "Show only this driver"}
+                                                style={{
+                                                    flex: 1,
+                                                    background: "transparent",
+                                                    border: "none",
+                                                    textAlign: "left",
+                                                    cursor: "pointer",
+                                                    whiteSpace: "nowrap",
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    fontWeight: active ? 700 : 500,
+                                                    padding: 0,
+                                                }}
+                                            >
+                                                {it.name}
+                                            </button>
+                                            <div
+                                                style={{
+                                                    fontVariantNumeric: "tabular-nums",
+                                                    opacity: 0.85,
+                                                    paddingLeft: 6,
+                                                }}
+                                            >
+                                                {it.count}
+                                            </div>
+                                            {!isDriver0 && onRenameDriver && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        startEditDriver(it.driverId, it.name);
+                                                    }}
+                                                    title="Edit driver number"
+                                                    style={{
+                                                        padding: "2px 6px",
+                                                        fontSize: 11,
+                                                        border: "1px solid #ddd",
+                                                        borderRadius: 4,
+                                                        background: "#fff",
+                                                        cursor: "pointer",
+                                                        opacity: 0.7,
+                                                    }}
+                                                >
+                                                    ✎
+                                                </button>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
                             );
                         })}
                     </div>

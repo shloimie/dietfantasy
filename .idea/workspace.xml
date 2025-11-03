@@ -4,10 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="address fix">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="edit drivers">
+      <change afterPath="$PROJECT_DIR$/app/api/route/add-driver/route.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/api/route/remove-driver/route.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/api/route/rename-driver/route.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/page.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/page.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -101,14 +104,6 @@
       <workItem from="1760723189519" duration="28920000" />
       <workItem from="1760963363487" duration="758000" />
       <workItem from="1760978850036" duration="5945000" />
-    </task>
-    <task id="LOCAL-00001" summary="project">
-      <option name="closed" value="true" />
-      <created>1757227325232</created>
-      <option name="number" value="00001" />
-      <option name="presentableId" value="LOCAL-00001" />
-      <option name="project" value="LOCAL" />
-      <updated>1757227325233</updated>
     </task>
     <task id="LOCAL-00002" summary="errors">
       <option name="closed" value="true" />
@@ -494,7 +489,15 @@
       <option name="project" value="LOCAL" />
       <updated>1762189063255</updated>
     </task>
-    <option name="localTasksCounter" value="50" />
+    <task id="LOCAL-00050" summary="auto clean up">
+      <option name="closed" value="true" />
+      <created>1762189795722</created>
+      <option name="number" value="00050" />
+      <option name="presentableId" value="LOCAL-00050" />
+      <option name="project" value="LOCAL" />
+      <updated>1762189795723</updated>
+    </task>
+    <option name="localTasksCounter" value="51" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -512,8 +515,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="new generate" />
-    <MESSAGE value="new loading and colors" />
     <MESSAGE value="errors" />
     <MESSAGE value="all besides exel" />
     <MESSAGE value="exel" />
@@ -537,6 +538,8 @@
     <MESSAGE value="billings fix" />
     <MESSAGE value="address counting" />
     <MESSAGE value="address fix" />
-    <option name="LAST_COMMIT_MESSAGE" value="address fix" />
+    <MESSAGE value="auto clean up" />
+    <MESSAGE value="edit drivers" />
+    <option name="LAST_COMMIT_MESSAGE" value="edit drivers" />
   </component>
 </project>
