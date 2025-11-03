@@ -33,7 +33,11 @@ function mergeSigCounts(stops, sigRows) {
 /** Normalize address for duplicate detection (ignoring unit/apt) */
 function makeAddressKey(stop) {
     if (!stop) return "";
-    const addrRaw = String(stop.address || "").toLowerCase();
+    const addrRaw = String(stop.address || "")
+        .toLowerCase()
+        // Normalize all whitespace (including non-breaking spaces, tabs, etc.) to regular spaces
+        .replace(/\s+/g, " ")
+        .trim();
 
     // Strips unit markers (apt, suite, unit, floor, etc.)
     let addrNoUnit = addrRaw
@@ -60,15 +64,14 @@ function makeAddressKey(stop) {
         .replace(/\beast\b/g, "e")
         .replace(/\bwest\b/g, "w");
 
-    // Remove all periods and collapse spaces
-    addrNoUnit = addrNoUnit.replace(/\./g, "").replace(/\s+/g, " ").trim();
+    // Remove all periods, punctuation, and collapse all whitespace
+    addrNoUnit = addrNoUnit
+        .replace(/[.,;:]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
 
-    const city = String(stop.city || "").toLowerCase().trim();
-    const state = String(stop.state || "").toLowerCase().trim();
-    const zip = String(stop.zip || "").toLowerCase().trim();
-
-    // Key excludes apt on purpose (ignoring apt#)
-    return [addrNoUnit, city, state, zip].filter(Boolean).join("|");
+    // Only compare street address (first line), not city/state/zip
+    return addrNoUnit;
 }
 
 /** Listen for postMessage from the sign iframe */

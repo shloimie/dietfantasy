@@ -17,7 +17,11 @@ async function fetchSignStatusClient() {
 /** Build a normalized address key that ignores apt/unit and collapses spacing/case. */
 function makeAddressKey(stop) {
     if (!stop) return "";
-    const addrRaw = String(stop.address || "").toLowerCase();
+    const addrRaw = String(stop.address || "")
+        .toLowerCase()
+        // Normalize all whitespace (including non-breaking spaces, tabs, etc.) to regular spaces
+        .replace(/\s+/g, " ")
+        .trim();
 
     // Strip common inline unit markers if they appear inside address line itself
     // (e.g., "123 Main St Apt 5", "Ste 2", "Unit B", "#4").
@@ -45,15 +49,14 @@ function makeAddressKey(stop) {
         .replace(/\beast\b/g, "e")
         .replace(/\bwest\b/g, "w");
 
-    // Remove all periods and collapse spaces
-    addrNoUnit = addrNoUnit.replace(/\./g, "").replace(/\s+/g, " ").trim();
+    // Remove all periods, punctuation, and collapse all whitespace
+    addrNoUnit = addrNoUnit
+        .replace(/[.,;:]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
 
-    const city = String(stop.city || "").toLowerCase().trim();
-    const state = String(stop.state || "").toLowerCase().trim();
-    const zip = String(stop.zip || "").toLowerCase().trim();
-
-    // Key excludes stop.apt on purpose (we're "ignoring apt#")
-    return [addrNoUnit, city, state, zip].filter(Boolean).join("|");
+    // Only compare street address (first line), not city/state/zip
+    return addrNoUnit;
 }
 
 export default function DriversGrid({ drivers = [], allStops = [] }) {

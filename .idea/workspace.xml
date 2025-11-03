@@ -4,8 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="billings fix">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="address counting">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/DriversGrid.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/DriversGrid.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -477,7 +478,15 @@
       <option name="project" value="LOCAL" />
       <updated>1762142217773</updated>
     </task>
-    <option name="localTasksCounter" value="48" />
+    <task id="LOCAL-00048" summary="address counting">
+      <option name="closed" value="true" />
+      <created>1762186316764</created>
+      <option name="number" value="00048" />
+      <option name="presentableId" value="LOCAL-00048" />
+      <option name="project" value="LOCAL" />
+      <updated>1762186316764</updated>
+    </task>
+    <option name="localTasksCounter" value="49" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -495,7 +504,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="yossi convo" />
     <MESSAGE value="number + created" />
     <MESSAGE value="new generate" />
     <MESSAGE value="new loading and colors" />
@@ -520,6 +528,7 @@
     <MESSAGE value="arresses and bigger numbs" />
     <MESSAGE value="clean up" />
     <MESSAGE value="billings fix" />
-    <option name="LAST_COMMIT_MESSAGE" value="billings fix" />
+    <MESSAGE value="address counting" />
+    <option name="LAST_COMMIT_MESSAGE" value="address counting" />
   </component>
 </project>
