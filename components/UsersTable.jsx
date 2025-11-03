@@ -219,6 +219,47 @@ export default function UsersTable({
         setSortAsc((prev) => (k === sortKey ? !prev : true));
         setSortKey(k);
     };
+    // Robustly parse billings to an array
+    const parseBillingsArray = (b) => {
+        if (Array.isArray(b)) return b;
+        try {
+            if (typeof b === "string") return JSON.parse(b);
+        } catch {}
+        return [];
+    };
+
+// Pick the latest billing by addedAt, meta.when, then end
+    const getLatestBilling = (b) => {
+        const arr = parseBillingsArray(b);
+        if (!arr.length) return null;
+        return arr.slice().sort((a, b) => {
+            const ta = new Date(a?.addedAt ?? a?.meta?.when ?? a?.end ?? 0).getTime() || 0;
+            const tb = new Date(b?.addedAt ?? b?.meta?.when ?? b?.end ?? 0).getTime() || 0;
+            return tb - ta; // newest first
+        })[0];
+    };
+
+// MM/DD/YYYY
+    const fmtMDY = (iso) => {
+        if (!iso) return null;
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return null;
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${mm}/${dd}/${yyyy}`;
+    };
+
+// Render "MM/DD/YYYY-MM/DD/YYYY" (or "—" if none)
+    const renderLatestBillingRange = (b) => {
+        const latest = getLatestBilling(b);
+        if (!latest) return "—";
+        const s = fmtMDY(latest.start);
+        const e = fmtMDY(latest.end);
+        if (s && e) return `${s}-${e}`;
+        return s || e || "—";
+    };
+
 
     const wrap = { whiteSpace: "normal", wordBreak: "normal", overflowWrap: "break-word" };
     const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" };
@@ -434,11 +475,13 @@ export default function UsersTable({
                                 </div>
                             ),
                             dislikes: <div style={{ ...wrap, whiteSpace: "pre-wrap" }}>{u.dislikes ?? ""}</div>,
+
                             billings: (
-                                <div style={{ ...wrap, ...mono }}>
-                                    {stringifyBillings(u.billings)}
+                                <div style={{ ...wrap, ...mono }} title={stringifyBillings(u.billings)}>
+                                    {renderLatestBillingRange(u.billings)}
                                 </div>
                             ),
+
                             actions: (
                                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                                     <Button type="button" size="small" onClick={() => onEdit?.(u)} disabled={!onEdit}>
