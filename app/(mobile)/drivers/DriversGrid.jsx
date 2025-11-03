@@ -21,18 +21,38 @@ function makeAddressKey(stop) {
 
     // Strip common inline unit markers if they appear inside address line itself
     // (e.g., "123 Main St Apt 5", "Ste 2", "Unit B", "#4").
-    const addrNoUnit = addrRaw
-        .replace(/\b(apt|apartment|ste|suite|unit|fl|floor)\b\.?\s*[a-z0-9-]+/gi, "")
+    let addrNoUnit = addrRaw
+        .replace(/\b(apt|apartment|ste|suite|unit|fl|floor|bldg|building)\b\.?\s*[a-z0-9-]+/gi, "")
         .replace(/#\s*\w+/g, "")
         .replace(/[.,]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
 
+    // Normalize common street abbreviations to handle variations
+    addrNoUnit = addrNoUnit
+        .replace(/\bstreet\b/g, "st")
+        .replace(/\bavenue\b/g, "ave")
+        .replace(/\broad\b/g, "rd")
+        .replace(/\bdrive\b/g, "dr")
+        .replace(/\bcourt\b/g, "ct")
+        .replace(/\blane\b/g, "ln")
+        .replace(/\bboulevard\b/g, "blvd")
+        .replace(/\bparkway\b/g, "pkwy")
+        .replace(/\bcircle\b/g, "cir")
+        .replace(/\bplace\b/g, "pl")
+        .replace(/\bnorth\b/g, "n")
+        .replace(/\bsouth\b/g, "s")
+        .replace(/\beast\b/g, "e")
+        .replace(/\bwest\b/g, "w");
+
+    // Remove all periods and collapse spaces
+    addrNoUnit = addrNoUnit.replace(/\./g, "").replace(/\s+/g, " ").trim();
+
     const city = String(stop.city || "").toLowerCase().trim();
     const state = String(stop.state || "").toLowerCase().trim();
     const zip = String(stop.zip || "").toLowerCase().trim();
 
-    // Key excludes stop.apt on purpose (we’re “ignoring apt#”)
+    // Key excludes stop.apt on purpose (we're "ignoring apt#")
     return [addrNoUnit, city, state, zip].filter(Boolean).join("|");
 }
 

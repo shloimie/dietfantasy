@@ -30,6 +30,47 @@ function mergeSigCounts(stops, sigRows) {
     return stops.map((s) => ({ ...s, sigCollected: sigMap.get(Number(s.userId)) ?? 0 }));
 }
 
+/** Normalize address for duplicate detection (ignoring unit/apt) */
+function makeAddressKey(stop) {
+    if (!stop) return "";
+    const addrRaw = String(stop.address || "").toLowerCase();
+
+    // Strips unit markers (apt, suite, unit, floor, etc.)
+    let addrNoUnit = addrRaw
+        .replace(/\b(apt|apartment|ste|suite|unit|fl|floor|bldg|building)\b\.?\s*[a-z0-9-]+/gi, "")
+        .replace(/#\s*\w+/g, "")
+        .replace(/[.,]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // Normalize common street abbreviations to handle variations
+    addrNoUnit = addrNoUnit
+        .replace(/\bstreet\b/g, "st")
+        .replace(/\bavenue\b/g, "ave")
+        .replace(/\broad\b/g, "rd")
+        .replace(/\bdrive\b/g, "dr")
+        .replace(/\bcourt\b/g, "ct")
+        .replace(/\blane\b/g, "ln")
+        .replace(/\bboulevard\b/g, "blvd")
+        .replace(/\bparkway\b/g, "pkwy")
+        .replace(/\bcircle\b/g, "cir")
+        .replace(/\bplace\b/g, "pl")
+        .replace(/\bnorth\b/g, "n")
+        .replace(/\bsouth\b/g, "s")
+        .replace(/\beast\b/g, "e")
+        .replace(/\bwest\b/g, "w");
+
+    // Remove all periods and collapse spaces
+    addrNoUnit = addrNoUnit.replace(/\./g, "").replace(/\s+/g, " ").trim();
+
+    const city = String(stop.city || "").toLowerCase().trim();
+    const state = String(stop.state || "").toLowerCase().trim();
+    const zip = String(stop.zip || "").toLowerCase().trim();
+
+    // Key excludes apt on purpose (ignoring apt#)
+    return [addrNoUnit, city, state, zip].filter(Boolean).join("|");
+}
+
 /** Listen for postMessage from the sign iframe */
 function InlineMessageListener({ onDone }) {
     useEffect(() => {
@@ -148,6 +189,29 @@ export default function DriverDetailPage() {
     // A "signature complete user" = sigCollected >= 5
     const sigUsersDone = useMemo(() => stops.filter((s) => Number(s.sigCollected ?? 0) >= 5).length, [stops]);
     const pctSigs = stops.length ? (sigUsersDone / stops.length) * 100 : 0;
+
+    /* ================== Duplicate address detection ================== */
+    const addressGroups = useMemo(() => {
+        const groups = new Map(); // addressKey → stop[]
+        for (const stop of stops) {
+            const key = makeAddressKey(stop);
+            if (!key) continue;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(stop);
+        }
+        return groups;
+    }, [stops]);
+
+    const stopsWithDuplicateFlag = useMemo(() => {
+        return stops.map((stop) => {
+            const key = makeAddressKey(stop);
+            const group = addressGroups.get(key);
+            return {
+                ...stop,
+                hasDuplicateAtAddress: group && group.length > 1,
+            };
+        });
+    }, [stops, addressGroups]);
 
     const reverseRoute = async () => {
         if (reversing) return;
@@ -404,7 +468,7 @@ export default function DriverDetailPage() {
 
             {/* Stops list */}
             <section className="grid">
-                {stops.map((s, idx) => {
+                {stopsWithDuplicateFlag.map((s, idx) => {
                     const done = !!s.completed;
                     const sigs = Number(s.sigCollected ?? 0);
                     const sigDone = sigs >= 5;
@@ -424,7 +488,7 @@ export default function DriverDetailPage() {
                     const sigBtnIsOpening = sigOpeningId === s.id;
 
                     return (
-                        <div key={s.id} id={`stop-${s.id}`} className={`card stop-card ${done ? "done-bg" : ""}`}>
+                        <div key={s.id} id={`stop-${s.id}`} className={`card stop-card ${done ? "done-bg" : ""} ${s.hasDuplicateAtAddress ? "duplicate-address" : ""}`}>
                             <div className="color-rail" style={{ background: "var(--brand)" }} />
                             <div className="card-content">
                                 <div className="row top">
@@ -694,6 +758,10 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .b600{font-weight:600}
 .chip{font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}
 .done-bg{ background:#ECFDF5; }
+
+/* Duplicate address highlighting */
+.duplicate-address{ background:#FEFCE8; }
+.duplicate-address.done-bg{ background:#ECFDF5; border:3px solid #FDE047; }
 
 .btn{display:inline-flex; align-items:center; justify-content:center; gap:8px;
   padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:#111; color:#fff;

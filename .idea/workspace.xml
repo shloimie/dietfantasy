@@ -4,13 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="arresses and bigger numbs">
-      <change afterPath="$PROJECT_DIR$/app/api/ext/billings/route.ts" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/api/route/cleanup/route.ts" afterDir="false" />
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="billings fix">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/generate/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/generate/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -465,7 +461,23 @@
       <option name="project" value="LOCAL" />
       <updated>1762119914318</updated>
     </task>
-    <option name="localTasksCounter" value="46" />
+    <task id="LOCAL-00046" summary="clean up">
+      <option name="closed" value="true" />
+      <created>1762124413637</created>
+      <option name="number" value="00046" />
+      <option name="presentableId" value="LOCAL-00046" />
+      <option name="project" value="LOCAL" />
+      <updated>1762124413637</updated>
+    </task>
+    <task id="LOCAL-00047" summary="billings fix">
+      <option name="closed" value="true" />
+      <created>1762142217773</created>
+      <option name="number" value="00047" />
+      <option name="presentableId" value="LOCAL-00047" />
+      <option name="project" value="LOCAL" />
+      <updated>1762142217773</updated>
+    </task>
+    <option name="localTasksCounter" value="48" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -483,8 +495,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="generateor working" />
-    <MESSAGE value="new map" />
     <MESSAGE value="yossi convo" />
     <MESSAGE value="number + created" />
     <MESSAGE value="new generate" />
@@ -508,6 +518,8 @@
     <MESSAGE value="new extention get users route" />
     <MESSAGE value="accept ids" />
     <MESSAGE value="arresses and bigger numbs" />
-    <option name="LAST_COMMIT_MESSAGE" value="arresses and bigger numbs" />
+    <MESSAGE value="clean up" />
+    <MESSAGE value="billings fix" />
+    <option name="LAST_COMMIT_MESSAGE" value="billings fix" />
   </component>
 </project>
