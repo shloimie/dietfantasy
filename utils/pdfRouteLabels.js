@@ -227,7 +227,7 @@ export async function exportRouteLabelsPDF(routes, driverColors, tsString) {
         let printed = false;
 
         (stops || []).forEach((u, si) => {
-            const isCx = toBool(u?.complex) || isComplexFallback(u);
+            const isCx = toBool(u?.complex);
             if (isCx) {
                 complexAll.push({ u, driverIdx: di, stopIdx: si });
                 return;

@@ -119,8 +119,9 @@ function markStopComplex(stop, idx, idxs) {
         if (idxs.idSet.has(id)) return { ...s, complex: true, __complexSource: "user.id" };
     }
 
-    const nm = normalize(displayNameLoose(s));
-    if (nm && idxs.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
+    // NOTE: Name matching removed - different people can have the same name
+    // const nm = normalize(displayNameLoose(s));
+    // if (nm && idxs.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
 
     const ph = normalizePhone(s.phone || s?.user?.phone);
     if (ph && idxs.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
@@ -128,8 +129,11 @@ function markStopComplex(stop, idx, idxs) {
     const ak = normalizeAddr(s);
     if (ak && idxs.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
 
-    const ll = llKey(s);
-    if (ll !== "|" && idxs.llSet.has(ll)) return { ...s, complex: true, __complexSource: "user.latlng" };
+    // NOTE: lat/lng matching removed - nearby addresses shouldn't automatically be complex
+    // const ll = llKey(s);
+    // if (ll !== "|" && idxs.llSet.has(ll)) {
+    //     return { ...s, complex: true, __complexSource: "user.latlng" };
+    // }
 
     return { ...s, complex: false, __complexSource: "none" };
 }
@@ -879,16 +883,36 @@ export default function DriversDialog({
                             setBusy(true);
                             try {
                                 const idxs = buildComplexIndex(users);
+
+                                // Debug: Check for FRADY SILBERSTEIN
+                                console.log('[Download Labels] Checking for FRADY SILBERSTEIN in complex index');
+                                const fradyInIndex = Array.from(idxs.nameSet).filter(n => n.includes('frady') && n.includes('silberstein'));
+                                console.log('[Download Labels] FRADY SILBERSTEIN names in complex index:', fradyInIndex);
+
                                 const complexMarked = (routeStops || []).map((stops) =>
-                                    (stops || []).map((s, si) => markStopComplex(s, si, idxs))
+                                    (stops || []).map((s, si) => {
+                                        const marked = markStopComplex(s, si, idxs);
+                                        const userName = nameOf(s);
+                                        if (userName && userName.toUpperCase().includes('FRADY') && userName.toUpperCase().includes('SILBERSTEIN')) {
+                                            console.log('[Download Labels] FRADY SILBERSTEIN found:', {
+                                                id: s.id,
+                                                userId: s.userId,
+                                                name: userName,
+                                                address: s.address,
+                                                complex: marked.complex,
+                                                source: marked.__complexSource,
+                                            });
+                                        }
+                                        return marked;
+                                    })
                                 );
                                 const { enrichedSorted, colorsSorted } = buildSortedForLabels();
                                 const complexById = new Map();
                                 complexMarked.forEach(route => route.forEach(s => complexById.set(String(s.id), s)));
-                                const stampedWithComplex = enrichedSorted.map(route =>
-                                    route.map(s => {
+                                const stampedWithComplex = enrichedSorted.map((route, ri) =>
+                                    route.map((s, si) => {
                                         const cm = complexById.get(String(s.id));
-                                        return cm ? { ...s, complex: cm.complex, __complexSource: cm.__complexSource } : s;
+                                        return { ...s, complex: cm?.complex ?? false, __complexSource: cm?.__complexSource ?? 'none' };
                                     })
                                 );
                                 await exportRouteLabelsPDF(stampedWithComplex, colorsSorted, tsString);
