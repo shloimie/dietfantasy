@@ -210,9 +210,29 @@ export default function DriversDialog({
         const missing = users.filter(u => (u.lat ?? u.latitude) == null || (u.lng ?? u.longitude) == null);
         setMissingBatch(missing);
         setMapOpen(true);
-        loadRoutes();
-        fetchRuns(); // NEW
-    }, [open, users, loadRoutes, fetchRuns]);
+
+        // Load data and then auto-cleanup
+        (async () => {
+            try {
+                await loadRoutes();
+                await fetchRuns();
+                // Auto-cleanup after initial load
+                const res = await fetch("/api/route/cleanup", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ day: selectedDay }),
+                });
+                if (res.ok) {
+                    // Reload after cleanup
+                    await loadRoutes();
+                    await fetchRuns();
+                }
+            } catch (e) {
+                console.error("Auto-cleanup failed:", e);
+                // Silently fail - don't block the dialog
+            }
+        })();
+    }, [open, users, loadRoutes, fetchRuns, selectedDay]);
 
     async function handleManualGeocoded(updates) {
         try {
@@ -418,7 +438,7 @@ export default function DriversDialog({
             if (!silent) alert("Cleanup completed.");
         } catch (e) {
             console.error("Cleanup failed:", e);
-            alert("Cleanup failed: " + (e.message || "Unknown error"));
+            if (!silent) alert("Cleanup failed: " + (e.message || "Unknown error"));
         } finally {
             setBusy(false);
         }
@@ -750,17 +770,6 @@ export default function DriversDialog({
                         disabled={busy || !hasRoutes}
                     >
                         Download Labels
-                    </Button>
-
-                    {/* NEW: Clean Up */}
-                    <Button
-                        onClick={() => cleanUpNow()}
-                        variant="outlined"
-                        color="warning"
-                        disabled={busy}
-                        title="Remove any stops whose users were deleted, paused, or have Delivery = false; also purge orphaned data"
-                    >
-                        Clean Up
                     </Button>
 
                     <Button onClick={resetAllRoutes} variant="outlined" disabled={busy || !hasRoutes}>
