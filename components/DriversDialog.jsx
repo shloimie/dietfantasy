@@ -217,26 +217,43 @@ export default function DriversDialog({
 
         // Load data and then auto-cleanup
         (async () => {
+            setBusy(true);
             try {
-                await loadRoutes();
-                await fetchRuns();
+                // Load initial data
+                const res1 = await fetch(`/api/route/routes?day=${selectedDay}`, { cache: "no-store" });
+                const data1 = await res1.json();
+                setRoutes(data1.routes || []);
+                setUnrouted(data1.unrouted || []);
+
+                const res2 = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
+                const data2 = await res2.json();
+                setRuns(Array.isArray(data2.runs) ? data2.runs : []);
+
                 // Auto-cleanup after initial load
-                const res = await fetch("/api/route/cleanup", {
+                const res3 = await fetch("/api/route/cleanup", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ day: selectedDay }),
                 });
-                if (res.ok) {
+                if (res3.ok) {
                     // Reload after cleanup
-                    await loadRoutes();
-                    await fetchRuns();
+                    const res4 = await fetch(`/api/route/routes?day=${selectedDay}`, { cache: "no-store" });
+                    const data4 = await res4.json();
+                    setRoutes(data4.routes || []);
+                    setUnrouted(data4.unrouted || []);
+
+                    const res5 = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
+                    const data5 = await res5.json();
+                    setRuns(Array.isArray(data5.runs) ? data5.runs : []);
                 }
             } catch (e) {
                 console.error("Auto-cleanup failed:", e);
                 // Silently fail - don't block the dialog
+            } finally {
+                setBusy(false);
             }
         })();
-    }, [open, users, loadRoutes, fetchRuns, selectedDay]);
+    }, [open, users, selectedDay]);
 
     async function handleManualGeocoded(updates) {
         try {

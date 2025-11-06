@@ -91,8 +91,10 @@ export async function PUT(
     const scheduleInput = sanitizeSchedule(b.schedule);
 
     // Pull coords from body (support both lat/lng and latitude/longitude)
-    let bodyLat = num(b.lat ?? b.latitude);
-    let bodyLng = num(b.lng ?? b.longitude);
+    // Special handling: if clearGeocode flag is set, force null
+    const clearGeocode = !!b.clearGeocode;
+    let bodyLat = clearGeocode ? null : num(b.lat ?? b.latitude);
+    let bodyLng = clearGeocode ? null : num(b.lng ?? b.longitude);
     const cascadeStopsFlag = !!b.cascadeStops;
 
     // fetch current so we can detect changes
@@ -127,12 +129,13 @@ export async function PUT(
     const phoneChanged = (str(current?.phone) ?? "") !== (str(b.phone) ?? "");
 
     // Decide final coordinates:
-    // 1) If client provided lat/lng, trust them.
-    // 2) Else, geocode if needed (force when address changed).
+    // 1) If clearGeocode flag is set, force to null (skip geocoding)
+    // 2) If client provided lat/lng, trust them.
+    // 3) Else, geocode if needed (force when address changed).
     let finalLat = bodyLat;
     let finalLng = bodyLng;
 
-    if (finalLat == null || finalLng == null) {
+    if (!clearGeocode && (finalLat == null || finalLng == null)) {
         const { lat, lng } = await geocodeIfNeeded(
             {
                 address: b.address,
@@ -213,16 +216,19 @@ export async function PUT(
                 : {}),
 
             // coords to BOTH field styles (if we resolved them)
-            latitude: finalLat == null ? undefined : finalLat,
-            longitude: finalLng == null ? undefined : finalLng,
-            lat: finalLat == null ? undefined : finalLat,
-            lng: finalLng == null ? undefined : finalLng,
+            // Special case: when clearGeocode is true, explicitly set to null
+            latitude: clearGeocode ? null : (finalLat == null ? undefined : finalLat),
+            longitude: clearGeocode ? null : (finalLng == null ? undefined : finalLng),
+            lat: clearGeocode ? null : (finalLat == null ? undefined : finalLat),
+            lng: clearGeocode ? null : (finalLng == null ? undefined : finalLng),
 
-            geocodedAt: shouldSetGeocodedAt
-                ? new Date()
-                : addressChanged
-                    ? null
-                    : current?.geocodedAt ?? null,
+            geocodedAt: clearGeocode
+                ? null
+                : shouldSetGeocodedAt
+                    ? new Date()
+                    : addressChanged
+                        ? null
+                        : current?.geocodedAt ?? null,
         },
         include: {
             schedule: {
@@ -241,7 +247,7 @@ export async function PUT(
 
     // === Cascade denormalized fields to Stops when needed ===
     const shouldCascade =
-        cascadeStopsFlag || addressChanged || phoneChanged || (finalLat != null && finalLng != null);
+        cascadeStopsFlag || addressChanged || phoneChanged || clearGeocode || (finalLat != null && finalLng != null);
 
     if (shouldCascade) {
         const stopData: Record<string, any> = {};
@@ -251,8 +257,14 @@ export async function PUT(
         if (b.state !== undefined) stopData.state = b.state ?? null;
         if (b.zip !== undefined) stopData.zip = b.zip ?? null;
         if (b.phone !== undefined) stopData.phone = b.phone ?? null;
-        if (finalLat != null) stopData.lat = finalLat;
-        if (finalLng != null) stopData.lng = finalLng;
+        // Special case: when clearing geocode, explicitly set to null
+        if (clearGeocode) {
+            stopData.lat = null;
+            stopData.lng = null;
+        } else {
+            if (finalLat != null) stopData.lat = finalLat;
+            if (finalLng != null) stopData.lng = finalLng;
+        }
 
         if (Object.keys(stopData).length > 0) {
             try {

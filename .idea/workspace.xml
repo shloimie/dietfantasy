@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="edit drivers">
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="fixed labels">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversDialog.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversDialog.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/pdfRouteLabels.js" beforeDir="false" afterPath="$PROJECT_DIR$/utils/pdfRouteLabels.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMapLeaflet.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,6 +64,7 @@
     &quot;nodejs_interpreter_path&quot;: &quot;node&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
     &quot;npm.npm dev.executor&quot;: &quot;Run&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.lookFeel&quot;,
     &quot;ts.external.directory.path&quot;: &quot;/Users/shloimieheimowitz/WebstormProjects/dietfantasy/node_modules/typescript/lib&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
@@ -101,14 +101,7 @@
       <workItem from="1760723189519" duration="28920000" />
       <workItem from="1760963363487" duration="758000" />
       <workItem from="1760978850036" duration="5945000" />
-    </task>
-    <task id="LOCAL-00003" summary="errors and labels">
-      <option name="closed" value="true" />
-      <created>1757258443039</created>
-      <option name="number" value="00003" />
-      <option name="presentableId" value="LOCAL-00003" />
-      <option name="project" value="LOCAL" />
-      <updated>1757258443039</updated>
+      <workItem from="1762422844743" duration="707000" />
     </task>
     <task id="LOCAL-00004" summary="add typescrpit ability">
       <option name="closed" value="true" />
@@ -494,7 +487,15 @@
       <option name="project" value="LOCAL" />
       <updated>1762191082872</updated>
     </task>
-    <option name="localTasksCounter" value="52" />
+    <task id="LOCAL-00052" summary="fixed labels">
+      <option name="closed" value="true" />
+      <created>1762195535203</created>
+      <option name="number" value="00052" />
+      <option name="presentableId" value="LOCAL-00052" />
+      <option name="project" value="LOCAL" />
+      <updated>1762195535203</updated>
+    </task>
+    <option name="localTasksCounter" value="53" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -512,7 +513,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="errors" />
     <MESSAGE value="all besides exel" />
     <MESSAGE value="exel" />
     <MESSAGE value="save recent routes" />
@@ -537,6 +537,7 @@
     <MESSAGE value="address fix" />
     <MESSAGE value="auto clean up" />
     <MESSAGE value="edit drivers" />
-    <option name="LAST_COMMIT_MESSAGE" value="edit drivers" />
+    <MESSAGE value="fixed labels" />
+    <option name="LAST_COMMIT_MESSAGE" value="fixed labels" />
   </component>
 </project>

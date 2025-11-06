@@ -1096,6 +1096,77 @@ export default function DriversMapLeaflet({
         clearHalo();
     }, [setIconForId, clearHalo]);
 
+    /* ======== BULK DELETE GEOCODING ======== */
+    const deleteGeocodingForSelected = useCallback(async () => {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0 || bulkBusy) return;
+
+        // Confirmation dialog
+        const confirmed = window.confirm(
+            `Delete geocoding (lat/lng) for ${ids.length} selected user${ids.length > 1 ? 's' : ''}?\n\n` +
+            `This will remove their map location and they will need to be geocoded again.`
+        );
+        if (!confirmed) return;
+
+        setBulkBusy(true);
+        let successCount = 0;
+        let failCount = 0;
+
+        try {
+            for (const id of ids) {
+                const { stop } = findStopByIdLocal(
+                    id,
+                    localDriversRef.current,
+                    localUnroutedRef.current
+                );
+                if (!stop) continue;
+
+                // Get the actual userId (could be stop.userId or stop.id)
+                const userId = stop.userId || stop.id;
+                if (!userId) continue;
+
+                try {
+                    // Use the clearGeocode flag to explicitly delete coordinates
+                    const res = await fetch(`/api/users/${userId}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            clearGeocode: true,
+                            cascadeStops: true
+                        }),
+                    });
+                    if (!res.ok) {
+                        throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+                    }
+                    successCount++;
+                } catch (err) {
+                    console.error(`Failed to delete geocoding for user ${userId}:`, err);
+                    failCount++;
+                }
+            }
+
+            // Show result
+            if (failCount > 0) {
+                alert(`Geocoding deleted for ${successCount} user${successCount !== 1 ? 's' : ''}.\n${failCount} failed.\n\nPage will reload to refresh the view.`);
+            } else {
+                alert(`Geocoding deleted for ${successCount} user${successCount !== 1 ? 's' : ''}.\n\nPage will reload to refresh the view.`);
+            }
+
+            // Clear selection
+            clearSelection();
+
+            // Reload the page to refresh all data (users list, missing geocodes, etc.)
+            if (successCount > 0) {
+                window.location.reload();
+            }
+        } catch (err) {
+            console.error("[BulkDeleteGeocoding] failed:", err);
+            alert("Failed to delete geocoding: " + (err.message || "Unknown error"));
+        } finally {
+            setBulkBusy(false);
+        }
+    }, [selectedIds, bulkBusy, clearSelection]);
+
     /* ======== Expose API (optional) ======== */
     useEffect(() => {
         if (!onExpose) return;
@@ -1414,6 +1485,26 @@ export default function DriversMapLeaflet({
                                 }}
                             >
                                 Clear
+                            </button>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                                onClick={deleteGeocodingForSelected}
+                                disabled={bulkBusy || selectedCount === 0}
+                                style={{
+                                    flex: 1,
+                                    padding: "8px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #d32f2f",
+                                    background: bulkBusy || selectedCount === 0 ? "#f6f6f6" : "#ffebee",
+                                    color: bulkBusy || selectedCount === 0 ? "#999" : "#c62828",
+                                    cursor: bulkBusy || selectedCount === 0 ? "not-allowed" : "pointer",
+                                    fontWeight: 600,
+                                    opacity: bulkBusy ? 0.7 : 1,
+                                }}
+                                title="Remove lat/lng coordinates for selected users"
+                            >
+                                Delete Geocoding
                             </button>
                         </div>
                         <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
