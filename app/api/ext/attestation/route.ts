@@ -27,6 +27,7 @@ type Stroke = Pt[];
 type Signature = Stroke[]; // full signature = array of strokes
 
 type Body = {
+    userId?: number;     // e.g. 12345
     name?: string;       // "Jane Doe"
     phone?: string;      // any formatting ok
     address?: string;    // street/city/zip fragment
@@ -329,16 +330,24 @@ async function findUserProgressive({ name, phone, address }: { name?: string; ph
 // --- Main POST ---
 export async function POST(req: Request) {
     try {
-        const { name, phone, address, deliveryDate, startDate, endDate }: Body = await req.json();
+        const { userId, name, phone, address, deliveryDate, startDate, endDate }: Body = await req.json();
 
-        if (!name && !phone && !address) {
-            return new NextResponse(
-                JSON.stringify({ error: "Provide at least one of: name, phone, address." }),
-                { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
-            );
+        let found: any;
+
+        if (userId) {
+            found = await prisma.user.findUnique({ where: { id: userId } });
         }
 
-        const found = await findUserProgressive({ name, phone, address });
+        if (!found) {
+            if (!name && !phone && !address) {
+                return new NextResponse(
+                    JSON.stringify({ error: "Provide at least one of: userId, name, phone, or address." }),
+                    { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+                );
+            }
+            found = await findUserProgressive({ name, phone, address });
+        }
+
 
         if (!found) {
             return new NextResponse(
