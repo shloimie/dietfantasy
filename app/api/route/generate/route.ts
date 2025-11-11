@@ -105,7 +105,7 @@ export async function POST(req: Request) {
         };
 
         // ACTIVE = not paused AND deliverable AND (on day)
-        const activeUsers = users.filter(u => !u.paused && isDeliverable(u) && isOnDay(u));
+        const activeUsers = users;
         const activeUserIds = new Set(activeUsers.map(u => u.id));
 
         // 🔥 Purge stops for THIS day if user is missing, paused, or not deliverable

@@ -4,7 +4,20 @@ import { NextResponse } from "next/server";
 import prisma from "../../../lib/prisma";
 import { geocodeIfNeeded } from "../../../lib/geocode";
 
+// --- CORS headers ---
+const ALLOW_ORIGIN = process.env.EXT_ORIGIN || "*";
+const CORS_HEADERS = {
+    "Access-Control-Allow-Origin": ALLOW_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+    return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 function sanitizeSchedule(input: any) {
+// ... (rest of the file is unchanged)
     const s = input ?? {};
     return {
         monday: s.monday ?? true,
@@ -86,7 +99,7 @@ export async function GET() {
                 caseId: true,
             },
         });
-        return NextResponse.json(list, { status: 200 });
+        return NextResponse.json(list, { status: 200, headers: CORS_HEADERS });
     } catch (e: any) {
         console.error("GET /api/users failed (with new fields). Falling back.", e?.message || e);
         try {
@@ -133,10 +146,10 @@ export async function GET() {
                 clientId: null,
                 caseId: null,
             }));
-            return NextResponse.json(hydrated, { status: 200 });
+            return NextResponse.json(hydrated, { status: 200, headers: CORS_HEADERS });
         } catch (e2: any) {
             console.error("GET /api/users fallback also failed:", e2?.message || e2);
-            return NextResponse.json({ error: "Failed to load users" }, { status: 500 });
+            return NextResponse.json({ error: "Failed to load users" }, { status: 500, headers: CORS_HEADERS });
         }
     }
 }
@@ -172,7 +185,7 @@ export async function POST(req: Request) {
             bodyLng = num(lng);
         }
 
-        const created = await prisma.user.create({
+        const createdUser = await prisma.user.create({
             data: {
                 first: b.first,
                 last: b.last,
@@ -209,12 +222,38 @@ export async function POST(req: Request) {
             include: { schedule: true },
         });
 
-        return NextResponse.json(created, { status: 201 });
+        // Create a corresponding stop record if one doesn't already exist
+        const existingStop = await prisma.stop.findFirst({
+            where: {
+                userId: createdUser.id,
+            },
+        });
+
+        if (!existingStop) {
+            await prisma.stop.create({
+                data: {
+                    day: "all",
+                    userId: createdUser.id,
+                    name: `${createdUser.first ?? ""} ${createdUser.last ?? ""}`.trim() + ` (User ID: ${createdUser.id})` || `(Unnamed User ID: ${createdUser.id})`,
+                    address: createdUser.address,
+                    apt: createdUser.apt,
+                    city: createdUser.city,
+                    state: createdUser.state,
+                    zip: createdUser.zip,
+                    phone: createdUser.phone,
+                    lat: createdUser.lat,
+                    lng: createdUser.lng,
+                    assignedDriverId: null,
+                },
+            });
+        }
+
+        return NextResponse.json(createdUser, { status: 201, headers: CORS_HEADERS });
     } catch (e: any) {
         console.error("POST /api/users failed:", e?.message || e);
         return NextResponse.json(
             { error: "Create user failed", detail: e?.message || String(e) },
-            { status: 400 }
+            { status: 400, headers: CORS_HEADERS }
         );
     }
 }

@@ -5,6 +5,18 @@ const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 const TRI_STATE_BOUNDS = "39.5,-75.8|41.9,-72.9";
 const COMPONENTS = "country:US|administrative_area:NY";
 
+// --- CORS headers ---
+const ALLOW_ORIGIN = process.env.EXT_ORIGIN || "*";
+const CORS_HEADERS = {
+    "Access-Control-Allow-Origin": ALLOW_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+    return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 function normalizeSuffixes(q: string) {
     const map: Record<string, string> = {
         circle: "cir", cir: "cir", avenue: "ave", ave: "ave",
@@ -85,7 +97,7 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const q = (searchParams.get("q") || "").trim();
         const limit = Math.min(10, Math.max(3, Number(searchParams.get("limit") || 6)));
-        if (!q) return NextResponse.json({ items: [], queryUsed: "" });
+        if (!q) return NextResponse.json({ items: [], queryUsed: "" }, { headers: CORS_HEADERS });
 
         const fp = await googleFindPlace(q);
         let items = fp.items;
@@ -99,8 +111,8 @@ export async function GET(req: Request) {
             items = nm.items;
         }
 
-        return NextResponse.json({ items: items.slice(0, limit), queryUsed: normalizeSuffixes(q) });
+        return NextResponse.json({ items: items.slice(0, limit), queryUsed: normalizeSuffixes(q) }, { headers: CORS_HEADERS });
     } catch (e: any) {
-        return NextResponse.json({ items: [], error: e?.message || "search failed" }, { status: 500 });
+        return NextResponse.json({ items: [], error: e?.message || "search failed" }, { status: 500, headers: CORS_HEADERS });
     }
 }

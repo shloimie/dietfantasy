@@ -414,7 +414,7 @@ export default function DriverDetailPage() {
                 </div>
                 <div className="hdr-count">
                     <div className="strong">{doneCount}/{stops.length}</div>
-                    <div className="muted tiny">Done</div>
+                    <div className="muted tiny">Bags</div>
                     <div className="strong sig-ct">{sigUsersDone}/{stops.length}</div>
                     <div className="muted tiny">Sigs</div>
                 </div>
@@ -439,7 +439,7 @@ export default function DriverDetailPage() {
                         <div className="flex" />
                         <div style={{ textAlign: "right" }}>
                             <div className="xxl">{doneCount}/{stops.length}</div>
-                            <div className="muted white">Completed</div>
+                            <div className="muted white">Bags</div>
                             <div className="xxl" style={{ marginTop: 6 }}>{sigUsersDone}/{stops.length}</div>
                             <div className="muted white">Signatures</div>
                         </div>

@@ -21,12 +21,17 @@ const FALLBACK_COLORS = [
     "#7f7f7f", // mid gray-brown (neutral contrast)
 ];
 
-function normPoint(p) {
+function normPoint(p, defaultCoords = null) {
     if (!p) return null;
     const lat = Number(p.lat ?? p.latitude);
     const lng = Number(p.lng ?? p.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    return { ...p, lat, lng };
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        if (defaultCoords) {
+            return { ...p, lat: defaultCoords.lat, lng: defaultCoords.lng, isDefault: true };
+        }
+        return null;
+    }
+    return { ...p, lat, lng, isDefault: false };
 }
 
 function displayName(p = {}) {
@@ -53,6 +58,21 @@ export default function DriversMap({
                                        optimizeDay = "all",
                                        onAfterOptimize,
                                    }) {
+    const center = useMemo(() => {
+        const validPoints = (routes || [])
+            .flatMap((r) => (Array.isArray(r) ? r : r?.stops || []))
+            .map((p) => normPoint(p))
+            .filter(Boolean);
+
+        if (!validPoints.length) return [40.7128, -74.006]; // NYC fallback
+
+        const lat = validPoints.reduce((s, p) => s + p.lat, 0) / validPoints.length;
+        const lng = validPoints.reduce((s, p) => s + p.lng, 0) / validPoints.length;
+        return [lat, lng];
+    }, [routes]);
+
+    const defaultCoords = useMemo(() => ({ lat: center[0], lng: center[1] }), [center]);
+
     const normalizedRoutes = useMemo(() => {
         return (routes || []).map((r, i) => {
             const stops = Array.isArray(r) ? r : (r?.stops || []);
@@ -63,14 +83,14 @@ export default function DriversMap({
             return {
                 color,
                 name,
-                stops: (stops || []).map(normPoint).filter(Boolean),
+                stops: (stops || []).map(p => normPoint(p, defaultCoords)).filter(Boolean),
             };
         });
-    }, [routes, driverColors]);
+    }, [routes, driverColors, defaultCoords]);
 
     const unroutedN = useMemo(
-        () => (unrouted || []).map(normPoint).filter(Boolean),
-        [unrouted]
+        () => (unrouted || []).map(p => normPoint(p, defaultCoords)).filter(Boolean),
+        [unrouted, defaultCoords]
     );
 
     const allPoints = useMemo(() => {
@@ -84,13 +104,6 @@ export default function DriversMap({
         // console.log("[DriversMap] routes sizes:", normalizedRoutes.map(r => r.stops.length));
         // console.log("[DriversMap] unrouted:", unroutedN.length);
     }, [normalizedRoutes, unroutedN]);
-
-    const center = useMemo(() => {
-        if (!allPoints.length) return [40.7128, -74.006]; // NYC fallback
-        const lat = allPoints.reduce((s, p) => s + p.lat, 0) / allPoints.length;
-        const lng = allPoints.reduce((s, p) => s + p.lng, 0) / allPoints.length;
-        return [lat, lng];
-    }, [allPoints]);
 
     const zoom = useMemo(() => {
         if (allPoints.length < 2) return 11;
@@ -140,6 +153,7 @@ export default function DriversMap({
             phone: p.phone ?? "",
             driverIdx,
             stopIdx,
+            isDefault: p.isDefault,
         });
     }
 
@@ -334,7 +348,7 @@ export default function DriversMap({
                         <Marker
                             key={`m-${i}-${p.id ?? idx}`}
                             width={36}
-                            color={route.color}
+                            color={p.isDefault ? "#808080" : route.color}
                             anchor={[p.lat, p.lng]}
                             onClick={({ event }) => {
                                 event?.stopPropagation?.();
@@ -348,7 +362,7 @@ export default function DriversMap({
                     <Marker
                         key={`u-${u.id ?? i}`}
                         width={30}
-                        color="#555"
+                        color={u.isDefault ? "#808080" : "#555"}
                         anchor={[u.lat, u.lng]}
                         onClick={({ event }) => {
                             event?.stopPropagation?.();
@@ -358,8 +372,14 @@ export default function DriversMap({
                 ))}
 
                 {popup && (
-                    <Overlay anchor={[popup.lat, popup.lng]} offset={[0, 0]}>
-                        <div />
+                    <Overlay anchor={[popup.lat, popup.lng]} offset={[120, 40]}>
+                        <div style={{ background: 'white', borderRadius: '5px', padding: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>
+                            <h4 style={{ margin: 0, color: popup.color }}>{popup.name}</h4>
+                            <p>{popup.addr1}</p>
+                            <p>{popup.addr2}</p>
+                            <p>{popup.phone}</p>
+                            {popup.isDefault && <p style={{ color: 'red', fontWeight: 'bold' }}>Location not accurate</p>}
+                        </div>
                     </Overlay>
                 )}
             </Map>

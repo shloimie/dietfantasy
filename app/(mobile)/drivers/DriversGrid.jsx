@@ -145,7 +145,7 @@ export default function DriversGrid({ drivers = [], allStops = [] }) {
                             {/* Stops completed */}
                             <div className="flex muted" style={{ marginTop: 12 }}>
                                 <MapPin style={{ width: 16, height: 16 }} />
-                                <span>{done} / {total} stops</span>
+                                <span>{done} / {total} bags</span>
                             </div>
                             <div className="progress" style={{ marginTop: 8 }}>
                                 <span style={{ width: `${pct}%`, background: color }} />
