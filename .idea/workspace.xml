@@ -4,17 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="uuser id for attestation">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ConfirmNewRouteDialog.jsx" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/DriversGrid.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/DriversGrid.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/(mobile)/drivers/[id]/page.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/geocode/search/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/geocode/search/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/route/generate/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/route/generate/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/users/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/users/route.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/DriversMap.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/components/DriversMap.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/temp.patch" beforeDir="false" />
-    </list>
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="fixed" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -30,6 +20,7 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="RESET_MODE" value="HARD" />
+    <option name="UPDATE_TYPE" value="REBASE" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
   &quot;lastFilter&quot;: {
@@ -514,7 +505,19 @@
       <map>
         <entry key="MAIN">
           <value>
-            <State />
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="main" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
           </value>
         </entry>
       </map>

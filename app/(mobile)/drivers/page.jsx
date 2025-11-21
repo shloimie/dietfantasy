@@ -1,27 +1,92 @@
-import Link from "next/link";
+"use client";
+
+import { useState, useEffect } from "react";
 import { fetchDrivers, fetchStops } from "../../../lib/api";
-import { Truck } from "lucide-react";
+import { Truck, RefreshCw } from "lucide-react";
 import SearchStops from "../../../components/SearchStops";
 import DriversGrid from "./DriversGrid";
 
-/** Always dynamic — no caching/ISR */
-export const dynamic = "force-dynamic";
+export default function DriversHome() {
+    const [drivers, setDrivers] = useState([]);
+    const [allStops, setAllStops] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(false);
 
-export const metadata = { title: "Delivery Routes" };
+    const loadData = async (showRefreshSpinner = false) => {
+        if (showRefreshSpinner) setRefreshing(true);
+        else setLoading(true);
+        setError(false);
 
-export default async function DriversHome() {
-    let drivers = [];
-    let allStops = [];
-    try {
-        drivers = await fetchDrivers();
-        allStops = await fetchStops();
-    } catch {
+        try {
+            // Call cleanup first to ensure data is up to date
+            await fetch("/api/route/cleanup?day=all", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            }).catch(() => {}); // Silently fail if cleanup errors
+
+            // Then fetch the cleaned data
+            const [driversData, stopsData] = await Promise.all([
+                fetchDrivers(),
+                fetchStops()
+            ]);
+            setDrivers(driversData);
+            setAllStops(stopsData);
+        } catch (err) {
+            console.error("Failed to load data:", err);
+            setError(true);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    if (error) {
         return (
             <div style={{ minHeight: "60vh", display: "grid", placeItems: "center", textAlign: "center" }}>
                 <div>
                     <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>Connection Error</h1>
                     <p style={{ marginTop: 8, color: "#6b7280" }}>Failed to load routes.</p>
+                    <button
+                        onClick={() => loadData()}
+                        style={{
+                            marginTop: 16,
+                            padding: "8px 16px",
+                            background: "#3665F3",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontWeight: 600
+                        }}
+                    >
+                        Try Again
+                    </button>
                 </div>
+            </div>
+        );
+    }
+
+    if (loading) {
+        return (
+            <div style={{ minHeight: "60vh", display: "grid", placeItems: "center" }}>
+                <div style={{ textAlign: "center" }}>
+                    <div style={{
+                        width: 40,
+                        height: 40,
+                        border: "3px solid #e5e7eb",
+                        borderTopColor: "#3665F3",
+                        borderRadius: "50%",
+                        animation: "spin 0.8s linear infinite",
+                        margin: "0 auto"
+                    }} />
+                    <p style={{ marginTop: 12, color: "#6b7280" }}>Loading routes...</p>
+                </div>
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
             </div>
         );
     }
@@ -32,10 +97,37 @@ export default async function DriversHome() {
                 <div className="card-content">
                     <header className="hdr">
                         <div className="hdr-badge"><Truck /></div>
-                        <div>
+                        <div style={{ flex: 1 }}>
                             <h1 className="h1">Delivery Routes</h1>
                             <p className="sub">Select your route to begin deliveries</p>
                         </div>
+                        <button
+                            onClick={() => loadData(true)}
+                            disabled={refreshing}
+                            style={{
+                                padding: "10px 16px",
+                                background: refreshing ? "#e5e7eb" : "#3665F3",
+                                color: refreshing ? "#6b7280" : "white",
+                                border: "none",
+                                borderRadius: 10,
+                                cursor: refreshing ? "not-allowed" : "pointer",
+                                fontWeight: 600,
+                                fontSize: 14,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                transition: "all 0.2s"
+                            }}
+                            title="Refresh routes data"
+                        >
+                            <RefreshCw
+                                size={16}
+                                style={{
+                                    animation: refreshing ? "spin 0.8s linear infinite" : "none"
+                                }}
+                            />
+                            Refresh
+                        </button>
                     </header>
 
                     <div className="search-wrap">
@@ -77,6 +169,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:#111;
 .progress.sig{height:8px;background:#eef6fb}
 .progress.sig>span{background:var(--sigbar)}
 .search-wrap{margin-bottom:16px}
+@keyframes spin { to { transform: rotate(360deg); } }
         `,
                 }}
             />

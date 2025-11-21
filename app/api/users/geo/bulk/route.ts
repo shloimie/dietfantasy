@@ -31,6 +31,15 @@ export async function POST(req: Request) {
                     where: { id },
                     data: { lat, lng, geocodedAt: new Date() },
                 });
+
+                // Cascade coordinates to stops
+                await prisma.stop.updateMany({
+                    where: { userId: id },
+                    data: { lat, lng },
+                }).catch((e) => {
+                    console.error(`Failed to cascade coords to stops for user ${id}:`, e);
+                });
+
                 results.push({ id, ok: true });
             } catch (e: any) {
                 results.push({ id, ok: false, reason: e?.message || "DB error" });

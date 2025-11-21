@@ -101,6 +101,8 @@ export async function PUT(
     const current = await prisma.user.findUnique({
         where: { id: userId },
         select: {
+            first: true,
+            last: true,
             address: true,
             apt: true,
             city: true,
@@ -246,16 +248,27 @@ export async function PUT(
     });
 
     // === Cascade denormalized fields to Stops when needed ===
+    const nameChanged =
+        (b.first !== undefined || b.last !== undefined) &&
+        (`${b.first ?? current?.first ?? ""} ${b.last ?? current?.last ?? ""}`.trim() !==
+         `${current?.first ?? ""} ${current?.last ?? ""}`.trim());
+
     const shouldCascade =
-        cascadeStopsFlag || addressChanged || phoneChanged || clearGeocode || (finalLat != null && finalLng != null);
+        cascadeStopsFlag || addressChanged || phoneChanged || nameChanged || clearGeocode || (finalLat != null && finalLng != null);
 
     if (shouldCascade) {
         const stopData: Record<string, any> = {};
+        // Cascade name if first or last changed
+        if (b.first !== undefined || b.last !== undefined) {
+            const firstName = b.first ?? current?.first ?? "";
+            const lastName = b.last ?? current?.last ?? "";
+            stopData.name = `${firstName} ${lastName}`.trim();
+        }
         if (b.address !== undefined) stopData.address = b.address ?? null;
         if (b.apt !== undefined) stopData.apt = b.apt ?? null;
         if (b.city !== undefined) stopData.city = b.city ?? null;
         if (b.state !== undefined) stopData.state = b.state ?? null;
-        if (b.zip !== undefined) stopData.zip = b.zip ?? null;
+        if (b.zip !== undefined) stopData.zip = b.zip ?? '';
         if (b.phone !== undefined) stopData.phone = b.phone ?? null;
         // Special case: when clearing geocode, explicitly set to null
         if (clearGeocode) {
@@ -268,10 +281,12 @@ export async function PUT(
 
         if (Object.keys(stopData).length > 0) {
             try {
-                await prisma.stop.updateMany({
+                console.log(`[/api/users/${userId}] Cascading to stops:`, stopData);
+                const result = await prisma.stop.updateMany({
                     where: { userId },
                     data: stopData,
                 });
+                console.log(`[/api/users/${userId}] Cascaded to ${result.count} stops`);
             } catch (e: any) {
                 console.error("Cascade update to stops failed:", e?.message || e);
                 // don't fail the request — user update already succeeded

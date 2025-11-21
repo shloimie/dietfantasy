@@ -266,6 +266,16 @@ export async function POST() {
                 },
             });
 
+            // Cascade coordinates to stops
+            try {
+                await prisma.stop.updateMany({
+                    where: { userId: u.id },
+                    data: { lat: coords.lat, lng: coords.lng },
+                });
+            } catch (e) {
+                console.error(`Failed to cascade coords to stops for user ${u.id}:`, e);
+            }
+
             updated++;
             updatedUsers.push(saved);
             details.push({ id: u.id, ok: true, source });

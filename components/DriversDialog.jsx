@@ -229,12 +229,19 @@ export default function DriversDialog({
                 const data2 = await res2.json();
                 setRuns(Array.isArray(data2.runs) ? data2.runs : []);
 
-                // Auto-cleanup after initial load
-                const res3 = await fetch("/api/route/cleanup", {
+                // Auto-cleanup after initial load (for selected day and "all" for drivers)
+                const res3 = await fetch(`/api/route/cleanup?day=${selectedDay}`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ day: selectedDay }),
                 });
+
+                // Also cleanup "all" day routes (used by driver app)
+                if (selectedDay !== "all") {
+                    await fetch("/api/route/cleanup?day=all", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                    }).catch(() => {});
+                }
                 if (res3.ok) {
                     // Reload after cleanup
                     const res4 = await fetch(`/api/route/routes?day=${selectedDay}`, { cache: "no-store" });

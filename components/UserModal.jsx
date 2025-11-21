@@ -326,6 +326,9 @@ export default function UserModal({ open, onClose, onSaved, editingUser, selecte
                 // unite us IDs (parsed from URL)
                 caseId: parsed.caseId,
                 clientId: parsed.clientId,
+
+                // Force cascade to stops on edit
+                ...(isEdit ? { cascadeStops: true } : {}),
             };
 
             const res = await fetch(url, {
