@@ -22,7 +22,7 @@ type Body = { day?: string; driverCount?: number; useDietFantasyStart?: boolean 
 
 function normalizeDay(raw?: string | null) {
     const s = String(raw ?? "all").toLowerCase().trim();
-    const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday","all"];
+    const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "all"];
     return days.includes(s) ? s : "all";
 }
 
@@ -105,8 +105,27 @@ export async function POST(req: Request) {
         };
 
         // ACTIVE = not paused AND deliverable AND (on day)
-        const activeUsers = users;
+        // Filter to only include users who should have stops created
+        const activeUsers = users.filter(u => {
+            const notPaused = !u.paused;
+            const hasDelivery = isDeliverable(u);
+            const onSchedule = isOnDay(u);
+            const isActive = notPaused && hasDelivery && onSchedule;
+
+            // Debug logging for specific users
+            if (u.first?.toUpperCase().includes('YAKOV') || u.first?.toUpperCase().includes('YIDIS')) {
+                console.log(`[DEBUG] User: ${u.first} ${u.last} (ID: ${u.id})`);
+                console.log(`  - paused: ${u.paused}, notPaused: ${notPaused}`);
+                console.log(`  - delivery: ${u.delivery}, hasDelivery: ${hasDelivery}`);
+                console.log(`  - onSchedule: ${onSchedule}`);
+                console.log(`  - ACTIVE: ${isActive}`);
+            }
+
+            return isActive;
+        });
         const activeUserIds = new Set(activeUsers.map(u => u.id));
+
+        console.log(`[/api/route/generate] Total users: ${users.length}, Active users: ${activeUsers.length} for day: ${dayValue}`);
 
         // 🔥 Purge stops for THIS day if user is missing, paused, or not deliverable
         await prisma.stop.deleteMany({
@@ -164,6 +183,8 @@ export async function POST(req: Request) {
             }));
         if (toCreate.length) {
             await prisma.stop.createMany({ data: toCreate, skipDuplicates: true });
+            console.log(`[/api/route/generate] Created ${toCreate.length} missing stops for active users:`,
+                toCreate.map(s => `${s.name} (ID: ${s.userId})`).join(', '));
         }
 
         // Pull current snapshot for THIS day (after mirror)
