@@ -110,24 +110,53 @@ function markStopComplex(stop, idx, idxs) {
         toBool(s?.user?.complex) ||
         toBool(s?.User?.complex) ||
         toBool(s?.client?.complex);
-    if (direct) return { ...s, complex: true, __complexSource: "stop.direct" };
+    if (direct) {
+        const userName = nameOf(s);
+        if (userName && userName.toUpperCase().includes('ETEL') && userName.toUpperCase().includes('ROSEN')) {
+            console.warn('[Complex Detection] ETEL ROSEN marked complex by direct flag:', {
+                id: s.id,
+                userId: s.userId,
+                name: userName,
+                complex: s.complex,
+                isComplex: s.isComplex,
+                flags: s.flags,
+                user: s.user,
+            });
+        }
+        return { ...s, complex: true, __complexSource: "stop.direct" };
+    }
 
     const ids = [
         s.userId, s.userID, s.userid, s?.user?.id, s?.User?.id, s?.client?.id, s.id,
     ].map(v => (v == null ? null : String(v))).filter(Boolean);
     for (const id of ids) {
-        if (idxs.idSet.has(id)) return { ...s, complex: true, __complexSource: "user.id" };
+        if (idxs.idSet.has(id)) {
+            const userName = nameOf(s);
+            if (userName && userName.toUpperCase().includes('ETEL') && userName.toUpperCase().includes('ROSEN')) {
+                console.log('[Complex Detection] ETEL ROSEN marked complex by user ID:', {
+                    id: s.id,
+                    userId: s.userId,
+                    name: userName,
+                    matchedId: id,
+                });
+            }
+            return { ...s, complex: true, __complexSource: "user.id" };
+        }
     }
 
     // NOTE: Name matching removed - different people can have the same name
     // const nm = normalize(displayNameLoose(s));
     // if (nm && idxs.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
 
-    const ph = normalizePhone(s.phone || s?.user?.phone);
-    if (ph && idxs.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
+    // NOTE: Phone matching removed - phone numbers can be shared (family members, businesses)
+    // This was causing false positives where non-complex users were marked complex
+    // const ph = normalizePhone(s.phone || s?.user?.phone);
+    // if (ph && idxs.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
 
-    const ak = normalizeAddr(s);
-    if (ak && idxs.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
+    // NOTE: Address matching removed - addresses can be shared (apartments, family members)
+    // This was causing false positives where non-complex users were marked complex
+    // const ak = normalizeAddr(s);
+    // if (ak && idxs.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
 
     // NOTE: lat/lng matching removed - nearby addresses shouldn't automatically be complex
     // const ll = llKey(s);

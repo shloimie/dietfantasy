@@ -108,22 +108,24 @@ function markStopComplex(stop, forceIdx, strict = false) {
 
     if (strict) return { ...s, complex: false, __complexSource: "none(strict)" };
 
-    // name
-    const nm = normalizeName(displayNameLoose(s));
-    if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
+    // NOTE: Name matching removed - different people can have the same name
+    // const nm = normalizeName(displayNameLoose(s));
+    // if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true, __complexSource: "user.name" };
 
-    // phone
-    const ph = normalizePhone(s.phone || s?.user?.phone);
-    if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
+    // NOTE: Phone matching removed - phone numbers can be shared (family members, businesses)
+    // This was causing false positives where non-complex users were marked complex
+    // const ph = normalizePhone(s.phone || s?.user?.phone);
+    // if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true, __complexSource: "user.phone" };
 
-    // address
-    const ak = normalizeAddr(s);
-    if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
+    // NOTE: Address matching removed - addresses can be shared (apartments, family members)
+    // This was causing false positives where non-complex users were marked complex
+    // const ak = normalizeAddr(s);
+    // if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true, __complexSource: "user.addr" };
 
-    // lat/lng
-    const ll = latLngKey(s);
-    if (ll !== "|" && forceIdx.llSet.has(ll))
-        return { ...s, complex: true, __complexSource: "user.latlng" };
+    // NOTE: lat/lng matching removed - nearby addresses shouldn't automatically be complex
+    // const ll = latLngKey(s);
+    // if (ll !== "|" && forceIdx.llSet.has(ll))
+    //     return { ...s, complex: true, __complexSource: "user.latlng" };
 
     return { ...s, complex: false, __complexSource: "none" };
 }

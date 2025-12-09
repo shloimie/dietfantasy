@@ -223,14 +223,25 @@ function markStopComplex(stop, forceIdx) {
         .map((v) => (v == null ? null : String(v)))
         .filter(Boolean);
     for (const id of ids) if (forceIdx.idSet.has(id)) return { ...s, complex: true };
-    const nm = normalizeName(displayNameLoose(s));
-    if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true };
-    const ph = normalizePhone(s.phone || s?.user?.phone);
-    if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true };
-    const ak = normalizeAddr(s);
-    if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true };
-    const ll = latLngKey(s);
-    if (ll !== "|" && forceIdx.llSet.has(ll)) return { ...s, complex: true };
+    
+    // NOTE: Name matching removed - different people can have the same name
+    // const nm = normalizeName(displayNameLoose(s));
+    // if (nm && forceIdx.nameSet.has(nm)) return { ...s, complex: true };
+    
+    // NOTE: Phone matching removed - phone numbers can be shared (family members, businesses)
+    // This was causing false positives where non-complex users were marked complex
+    // const ph = normalizePhone(s.phone || s?.user?.phone);
+    // if (ph && forceIdx.phoneSet.has(ph)) return { ...s, complex: true };
+    
+    // NOTE: Address matching removed - addresses can be shared (apartments, family members)
+    // This was causing false positives where non-complex users were marked complex
+    // const ak = normalizeAddr(s);
+    // if (ak && forceIdx.addrSet.has(ak)) return { ...s, complex: true };
+    
+    // NOTE: lat/lng matching removed - nearby addresses shouldn't automatically be complex
+    // const ll = latLngKey(s);
+    // if (ll !== "|" && forceIdx.llSet.has(ll)) return { ...s, complex: true };
+    
     return { ...s, complex: false };
 }
 

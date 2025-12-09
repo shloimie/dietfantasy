@@ -110,22 +110,9 @@ export async function POST(req: Request) {
             const notPaused = !u.paused;
             const hasDelivery = isDeliverable(u);
             const onSchedule = isOnDay(u);
-            const isActive = notPaused && hasDelivery && onSchedule;
-
-            // Debug logging for specific users
-            if (u.first?.toUpperCase().includes('YAKOV') || u.first?.toUpperCase().includes('YIDIS')) {
-                console.log(`[DEBUG] User: ${u.first} ${u.last} (ID: ${u.id})`);
-                console.log(`  - paused: ${u.paused}, notPaused: ${notPaused}`);
-                console.log(`  - delivery: ${u.delivery}, hasDelivery: ${hasDelivery}`);
-                console.log(`  - onSchedule: ${onSchedule}`);
-                console.log(`  - ACTIVE: ${isActive}`);
-            }
-
-            return isActive;
+            return notPaused && hasDelivery && onSchedule;
         });
         const activeUserIds = new Set(activeUsers.map(u => u.id));
-
-        console.log(`[/api/route/generate] Total users: ${users.length}, Active users: ${activeUsers.length} for day: ${dayValue}`);
 
         // 🔥 Purge stops for THIS day if user is missing, paused, or not deliverable
         await prisma.stop.deleteMany({
@@ -183,8 +170,6 @@ export async function POST(req: Request) {
             }));
         if (toCreate.length) {
             await prisma.stop.createMany({ data: toCreate, skipDuplicates: true });
-            console.log(`[/api/route/generate] Created ${toCreate.length} missing stops for active users:`,
-                toCreate.map(s => `${s.name} (ID: ${s.userId})`).join(', '));
         }
 
         // Pull current snapshot for THIS day (after mirror)
