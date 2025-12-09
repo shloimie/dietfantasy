@@ -4,10 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="fixed false complex">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/sign/[token]/view/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/sign/[token]/view/page.tsx" afterDir="false" />
-    </list>
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="update to secure" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -107,15 +104,7 @@
       <workItem from="1763683132947" duration="2658000" />
       <workItem from="1763903675092" duration="1899000" />
       <workItem from="1764349786946" duration="2853000" />
-      <workItem from="1765296826262" duration="1294000" />
-    </task>
-    <task id="LOCAL-00009" summary="password">
-      <option name="closed" value="true" />
-      <created>1757267731989</created>
-      <option name="number" value="00009" />
-      <option name="presentableId" value="LOCAL-00009" />
-      <option name="project" value="LOCAL" />
-      <updated>1757267731989</updated>
+      <workItem from="1765296826262" duration="1884000" />
     </task>
     <task id="LOCAL-00010" summary="label shapes">
       <option name="closed" value="true" />
@@ -501,7 +490,15 @@
       <option name="project" value="LOCAL" />
       <updated>1765297222190</updated>
     </task>
-    <option name="localTasksCounter" value="58" />
+    <task id="LOCAL-00058" summary="update to secure">
+      <option name="closed" value="true" />
+      <created>1765298323085</created>
+      <option name="number" value="00058" />
+      <option name="presentableId" value="LOCAL-00058" />
+      <option name="project" value="LOCAL" />
+      <updated>1765298323085</updated>
+    </task>
+    <option name="localTasksCounter" value="59" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -532,7 +529,6 @@
   </component>
   <component name="VcsManagerConfiguration">
     <option name="CHECK_CODE_SMELLS_BEFORE_PROJECT_COMMIT" value="false" />
-    <MESSAGE value="sig bar" />
     <MESSAGE value="current" />
     <MESSAGE value="new sigs file" />
     <MESSAGE value="maybe restore css" />
@@ -557,6 +553,7 @@
     <MESSAGE value="fixed" />
     <MESSAGE value="fixed generate" />
     <MESSAGE value="fixed false complex" />
-    <option name="LAST_COMMIT_MESSAGE" value="fixed false complex" />
+    <MESSAGE value="update to secure" />
+    <option name="LAST_COMMIT_MESSAGE" value="update to secure" />
   </component>
 </project>
