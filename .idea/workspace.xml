@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="update to secure" />
+    <list default="true" id="be730ca8-b9b7-4a60-9cd4-b36293f20290" name="Changes" comment="update to secure">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/sign/[token]/view/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/sign/[token]/view/page.tsx" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -104,15 +107,7 @@
       <workItem from="1763683132947" duration="2658000" />
       <workItem from="1763903675092" duration="1899000" />
       <workItem from="1764349786946" duration="2853000" />
-      <workItem from="1765296826262" duration="1884000" />
-    </task>
-    <task id="LOCAL-00010" summary="label shapes">
-      <option name="closed" value="true" />
-      <created>1757341693392</created>
-      <option name="number" value="00010" />
-      <option name="presentableId" value="LOCAL-00010" />
-      <option name="project" value="LOCAL" />
-      <updated>1757341693392</updated>
+      <workItem from="1765296826262" duration="3293000" />
     </task>
     <task id="LOCAL-00011" summary="update not going through test">
       <option name="closed" value="true" />
@@ -498,7 +493,15 @@
       <option name="project" value="LOCAL" />
       <updated>1765298323085</updated>
     </task>
-    <option name="localTasksCounter" value="59" />
+    <task id="LOCAL-00059" summary="update to secure">
+      <option name="closed" value="true" />
+      <created>1765298770284</created>
+      <option name="number" value="00059" />
+      <option name="presentableId" value="LOCAL-00059" />
+      <option name="project" value="LOCAL" />
+      <updated>1765298770284</updated>
+    </task>
+    <option name="localTasksCounter" value="60" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

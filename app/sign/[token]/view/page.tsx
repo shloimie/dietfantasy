@@ -78,6 +78,8 @@ export default function SignaturesViewPage() {
     // PDF controls
     const [pdfBusy, setPdfBusy] = useState(false);
     const [exportSlot, setExportSlot] = useState<"random" | number>("random");
+    const [startDate, setStartDate] = useState<string>(todayString());
+    const [endDate, setEndDate] = useState<string>(todayString());
     const [deliveryDate, setDeliveryDate] = useState<string>(todayString());
 
 
@@ -325,10 +327,6 @@ export default function SignaturesViewPage() {
             page.drawText("Meal Delivery Information", { x: margin, y, size: 14, font: bold });
             y -= lineGap;
 
-            const dateString = deliveryDate.trim();
-            page.drawText(`Date of Delivery: ${dateString || "—"}`, { x: margin + 12, y, size: 12, font });
-            y -= lineGap;
-
             // Type of Meals (checked boxes)
             page.drawText("Type of Meals (if applicable):", { x: margin + 12, y, size: 12, font });
             y -= lineGap;
@@ -350,12 +348,28 @@ export default function SignaturesViewPage() {
             y -= lineGap * 1.5;
 
             // First sentence: bold member name + wrapped continuation
+            const startDateString = startDate.trim();
+            const endDateString = endDate.trim();
+            const dateString = deliveryDate.trim();
+            
             const firstLineStart = `${fullName || "Member"}`;
             page.drawText(firstLineStart, { x: margin, y, size: 12, font: bold });
             const startWidth = bold.widthOfTextAtSize(firstLineStart, 12);
 
+            // Build the attestation text with dates
+            let dateText = "";
+            if (startDateString && endDateString && dateString) {
+                dateText = ` for the service period from ${startDateString} to ${endDateString}, delivered on ${dateString}`;
+            } else if (dateString) {
+                dateText = ` on ${dateString}`;
+            } else if (startDateString && endDateString) {
+                dateText = ` for the service period from ${startDateString} to ${endDateString}`;
+            } else {
+                dateText = " on the date indicated above";
+            }
+            
             const afterName =
-                `  confirms that they personally received their medically tailored meals on ${dateString || "the date indicated above"}.`;
+                `  confirms that they personally received their medically tailored meals${dateText}.`;
 
             // Remaining width on the current line after the name
             const remainingWidth = Math.max(0, usableWidth - startWidth);
@@ -503,22 +517,65 @@ export default function SignaturesViewPage() {
                         </select>
                     </label>
 
-                    {/* Delivery date textbox (used in two places in the PDF) */}
-                    <input
-                        type="text"
-                        inputMode="text"
-                        placeholder="Delivery Date (e.g. 10/12/2025)"
-                        value={deliveryDate}
-                        onChange={(e) => setDeliveryDate(e.target.value)}
-                        style={{
-                            padding: "6px 8px",
-                            borderRadius: 8,
-                            border: "1px solid #e5e7eb",
-                            background: "#fff",
-                            minWidth: 200,
-                        }}
-                        title="Enter the delivery date to include on the PDF"
-                    />
+                    {/* Start date textbox */}
+                    <label style={{ fontSize: 12, color: "#374151", display: "flex", flexDirection: "column", gap: 4 }}>
+                        Start Date:
+                        <input
+                            type="text"
+                            inputMode="text"
+                            placeholder="e.g. 10/12/2025"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            style={{
+                                padding: "6px 8px",
+                                borderRadius: 8,
+                                border: "1px solid #e5e7eb",
+                                background: "#fff",
+                                minWidth: 180,
+                            }}
+                            title="Enter the service period start date"
+                        />
+                    </label>
+                    
+                    {/* End date textbox */}
+                    <label style={{ fontSize: 12, color: "#374151", display: "flex", flexDirection: "column", gap: 4 }}>
+                        End Date:
+                        <input
+                            type="text"
+                            inputMode="text"
+                            placeholder="e.g. 10/12/2025"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            style={{
+                                padding: "6px 8px",
+                                borderRadius: 8,
+                                border: "1px solid #e5e7eb",
+                                background: "#fff",
+                                minWidth: 180,
+                            }}
+                            title="Enter the service period end date"
+                        />
+                    </label>
+                    
+                    {/* Delivery date textbox */}
+                    <label style={{ fontSize: 12, color: "#374151", display: "flex", flexDirection: "column", gap: 4 }}>
+                        Delivery Date:
+                        <input
+                            type="text"
+                            inputMode="text"
+                            placeholder="e.g. 10/12/2025"
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                            style={{
+                                padding: "6px 8px",
+                                borderRadius: 8,
+                                border: "1px solid #e5e7eb",
+                                background: "#fff",
+                                minWidth: 180,
+                            }}
+                            title="Enter the delivery date to include on the PDF"
+                        />
+                    </label>
 
                     {/* Download PDF */}
                     <button
