@@ -81,24 +81,24 @@ export default function SignaturesViewPage() {
     const [deliveryDate, setDeliveryDate] = useState<string>(todayString());
 
 
-    const padRefs = [
-        useRef<HTMLCanvasElement | null>(null),
-        useRef<HTMLCanvasElement | null>(null),
-        useRef<HTMLCanvasElement | null>(null),
-        useRef<HTMLCanvasElement | null>(null),
-        useRef<HTMLCanvasElement | null>(null),
-    ];
+    const padRefs = useMemo(() => [
+        React.createRef<HTMLCanvasElement>(),
+        React.createRef<HTMLCanvasElement>(),
+        React.createRef<HTMLCanvasElement>(),
+        React.createRef<HTMLCanvasElement>(),
+        React.createRef<HTMLCanvasElement>(),
+    ], []);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         const res = await fetch(`/api/signatures/admin/${token}`, { cache: "no-store" });
         if (!res.ok) throw new Error(await res.text());
         const j: Loaded = await res.json();
         setData(j);
-    };
+    }, [token]);
 
     useEffect(() => {
         load().catch((e) => alert(e.message || "Failed to load signatures"));
-    }, [token]);
+    }, [load]);
 
     useEffect(() => {
         // draw any provided strokes; if none, canvases remain blank
@@ -122,7 +122,7 @@ export default function SignaturesViewPage() {
                 if (c) drawStrokes(c, []);
             }
         });
-    }, [data]);
+    }, [data, padRefs]);
 
     const handleDeleteAll = async () => {
         if (!confirm("Delete ALL signatures for this user? This cannot be undone.")) return;
