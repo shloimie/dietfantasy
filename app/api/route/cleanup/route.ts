@@ -147,6 +147,47 @@ export async function POST(req: NextRequest) {
             stopsSynced += result.count;
         }
 
+        // Ensure all active users (not paused, delivery=true) have a stop for this day
+        // Check which users don't have a stop yet
+        const existingStopUserIds = await prisma.stop.findMany({
+            where: { ...dayWhere, userId: { in: Array.from(okUserIds) } },
+            select: { userId: true },
+        });
+        const usersWithStops = new Set(
+            existingStopUserIds.map(s => s.userId).filter((id): id is number => id != null)
+        );
+        
+        // Find users who need stops created
+        const usersNeedingStops = allUsersForSync.filter(u => !usersWithStops.has(u.id));
+        
+        let stopsCreated = 0;
+        if (usersNeedingStops.length > 0) {
+            const stopsToCreate = usersNeedingStops.map((u) => ({
+                day,
+                userId: u.id,
+                name: `${(u.first || "").trim()} ${(u.last || "").trim()}`.trim() || "(Unnamed)",
+                address: u.address ?? "",
+                apt: u.apt ?? null,
+                city: u.city ?? "",
+                state: u.state ?? "",
+                zip: u.zip ?? "",
+                phone: u.phone ?? null,
+                dislikes: u.dislikes ?? null,
+                lat: u.lat ?? null,
+                lng: u.lng ?? null,
+                completed: false,
+                proofUrl: null,
+                assignedDriverId: null,
+                order: null,
+            }));
+            
+            const createResult = await prisma.stop.createMany({
+                data: stopsToCreate,
+                skipDuplicates: true,
+            });
+            stopsCreated = createResult.count;
+        }
+
         return NextResponse.json({
             ok: true,
             day,
@@ -154,6 +195,7 @@ export async function POST(req: NextRequest) {
             driversPatched,
             clearedAssignments: toClear.length || 0,
             stopsSynced,
+            stopsCreated,
         });
     } catch (e: any) {
         console.error("[/api/route/cleanup] Error:", e);
