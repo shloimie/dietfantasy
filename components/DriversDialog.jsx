@@ -259,18 +259,41 @@ export default function DriversDialog({
                 setRuns(Array.isArray(data2.runs) ? data2.runs : []);
 
                 // Auto-cleanup after initial load (for selected day and "all" for drivers)
+                // This ensures all active users (not paused, delivery=true) have stops
                 const res3 = await fetch(`/api/route/cleanup?day=${selectedDay}`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                 });
 
+                let cleanupData = null;
+                if (res3.ok) {
+                    cleanupData = await res3.json().catch(() => null);
+                    if (cleanupData?.stopsCreated > 0) {
+                        console.log(`[DriversDialog] Created ${cleanupData.stopsCreated} missing stops for day "${selectedDay}"`);
+                    }
+                } else {
+                    const errorText = await res3.text().catch(() => "Unknown error");
+                    console.error(`[DriversDialog] Cleanup failed for "${selectedDay}":`, errorText);
+                }
+
                 // Also cleanup "all" day routes (used by driver app)
                 if (selectedDay !== "all") {
-                    await fetch("/api/route/cleanup?day=all", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                    }).catch(() => {});
+                    try {
+                        const resAll = await fetch("/api/route/cleanup?day=all", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                        });
+                        if (resAll.ok) {
+                            const allData = await resAll.json().catch(() => null);
+                            if (allData?.stopsCreated > 0) {
+                                console.log(`[DriversDialog] Created ${allData.stopsCreated} missing stops for day "all"`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("[DriversDialog] Cleanup for 'all' day failed:", e);
+                    }
                 }
+
                 if (res3.ok) {
                     // Reload after cleanup
                     const res4 = await fetch(`/api/route/routes?day=${selectedDay}`, { cache: "no-store" });

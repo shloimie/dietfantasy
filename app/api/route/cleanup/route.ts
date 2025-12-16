@@ -162,6 +162,7 @@ export async function POST(req: NextRequest) {
         
         let stopsCreated = 0;
         if (usersNeedingStops.length > 0) {
+            console.log(`[cleanup] Found ${usersNeedingStops.length} users missing stops for day "${day}"`);
             const stopsToCreate = usersNeedingStops.map((u) => ({
                 day,
                 userId: u.id,
@@ -186,6 +187,9 @@ export async function POST(req: NextRequest) {
                 skipDuplicates: true,
             });
             stopsCreated = createResult.count;
+            console.log(`[cleanup] Created ${stopsCreated} stops for day "${day}"`);
+        } else {
+            console.log(`[cleanup] All active users already have stops for day "${day}"`);
         }
 
         return NextResponse.json({
