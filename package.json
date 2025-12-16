@@ -35,7 +35,7 @@
     "jspdf-autotable": "^5.0.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.544.0",
-    "next": "^16.0.8",
+    "next": "16.0.10",
     "pdf-lib": "^1.17.1",
     "pigeon-maps": "^0.22.1",
     "react": "^19.2.1",
