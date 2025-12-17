@@ -12,6 +12,7 @@ import UserModal from "../components/UserModal";
 import CityColorsDialog from "../components/CityColorsDialog";
 import DriversDialog from "../components/DriversDialog";
 import DriversMap from "../components/DriversMap";
+import ChangePasswordDialog from "../components/ChangePasswordDialog";
 
 /* =========================
    Users API hook
@@ -296,6 +297,7 @@ export default function UsersPage() {
     const [editingUser, setEditingUser] = React.useState(null);
     const [driversOpen, setDriversOpen] = React.useState(false);
     const [cityColorsOpen, setCityColorsOpen] = React.useState(false);
+    const [changePasswordOpen, setChangePasswordOpen] = React.useState(false);
 
     // Map modal + data
     const [mapOpen, setMapOpen] = React.useState(false);
@@ -457,6 +459,33 @@ export default function UsersPage() {
                         onExportLabels={doExportLabels}
                         onOpenCityColors={() => setCityColorsOpen(true)}
                         onOpenDrivers={() => setDriversOpen(true)}
+                        onChangePassword={() => setChangePasswordOpen(true)}
+                        onResetLogins={async () => {
+                            if (!confirm("This will log out all users. Are you sure?")) {
+                                return;
+                            }
+                            const adminPassword = prompt("Enter admin password to confirm:");
+                            if (!adminPassword) {
+                                return;
+                            }
+                            try {
+                                const res = await fetch("/api/auth/reset-logins", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ adminPassword }),
+                                });
+                                const data = await res.json();
+                                if (res.ok) {
+                                    alert("All user sessions have been reset. You will be logged out now.");
+                                    // Redirect to login page
+                                    window.location.href = "/auth/login";
+                                } else {
+                                    alert(data.error || "Failed to reset logins");
+                                }
+                            } catch (e) {
+                                alert("Failed to reset logins: " + (e.message || "Unknown error"));
+                            }
+                        }}
                     />
                 </Box>
 
@@ -568,6 +597,16 @@ export default function UsersPage() {
                     />
                 </div>
             </Dialog>
+
+            <ChangePasswordDialog
+                open={changePasswordOpen}
+                onClose={() => setChangePasswordOpen(false)}
+                onSuccess={() => {
+                    // Password changed successfully
+                    // Optionally show a success message or refresh
+                    alert("Password changed successfully! You may need to log in again.");
+                }}
+            />
         </Box>
     );
 }

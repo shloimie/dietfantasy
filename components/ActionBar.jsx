@@ -14,6 +14,8 @@ import {
 } from "@mui/material";
 import ClearIcon from "@mui/icons-material/Clear";
 import RouteIcon from "@mui/icons-material/AltRoute";
+import LockIcon from "@mui/icons-material/Lock";
+import LogoutIcon from "@mui/icons-material/Logout";
 
 export default function ActionBar({
                                       // state / display
@@ -33,6 +35,8 @@ export default function ActionBar({
                                       onExportLabels = () => {},
                                       onOpenCityColors = () => {},
                                       onOpenDrivers = () => {},
+                                      onChangePassword = () => {},
+                                      onResetLogins = () => {},
                                   }) {
     const disabled = Boolean(busy);
 
@@ -230,6 +234,40 @@ export default function ActionBar({
                             }}
                         >
                             City Colors
+                        </Button>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onChangePassword}
+                            disabled={disabled}
+                            startIcon={<LockIcon />}
+                            sx={{
+                                borderColor: "#ef4444",
+                                color: "#991b1b",
+                                "&:hover": {
+                                    borderColor: "#dc2626",
+                                    backgroundColor: "rgba(239,68,68,0.08)",
+                                },
+                            }}
+                        >
+                            Change Password
+                        </Button>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onResetLogins}
+                            disabled={disabled}
+                            startIcon={<LogoutIcon />}
+                            sx={{
+                                borderColor: "#f59e0b",
+                                color: "#92400e",
+                                "&:hover": {
+                                    borderColor: "#d97706",
+                                    backgroundColor: "rgba(245,158,11,0.08)",
+                                },
+                            }}
+                        >
+                            Reset Logins
                         </Button>
                     </Stack>
                 </Box>

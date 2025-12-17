@@ -150,3 +150,13 @@ model RouteRun {
   @@index([day, createdAt(sort: Desc)])
   @@map("RouteRun")
 }
+
+model Settings {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("Settings")
+}

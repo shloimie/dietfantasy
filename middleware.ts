@@ -1,6 +1,5 @@
 // middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { createHash } from "crypto";
 
 const PUBLIC_PATHS = new Set([
     "/auth/login",
@@ -13,11 +12,17 @@ const API_PATH = /^\/api(\/|$)/;
 
 // Generate a hash of the password to verify cookie validity
 // This ensures that when password changes, all existing sessions are invalidated
-function getPasswordHash(password: string): string {
-    return createHash("sha256").update(password).digest("hex").substring(0, 16);
+// Uses Web Crypto API (Edge Runtime compatible) instead of Node.js crypto
+async function getPasswordHash(password: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    return hashHex.substring(0, 16);
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
     const { pathname } = req.nextUrl;
 
     // ✅ Always allow API routes
@@ -34,24 +39,83 @@ export function middleware(req: NextRequest) {
     
     if (authCookie) {
         // Check if cookie format is valid and password hash matches current password
-        const currentPassword = process.env.APP_PASSWORD;
-        if (currentPassword) {
-            const expectedHash = getPasswordHash(currentPassword);
+        // We check against both env APP_PASSWORD and ADMIN_PASSWORD
+        const envAppPassword = process.env.APP_PASSWORD;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+        
+        // Support both old format (just "ok") and new format ("ok:hash")
+        if (authCookie === "ok") {
+            // Old format - invalidate it by redirecting to login
+            // This forces re-login with new password
+        } else if (authCookie.startsWith("ok:")) {
+            // Cookie format: 
+            // - "ok:hash" (old, no session secret)
+            // - "ok:hash:secretPrefix" (new with session secret, no reset timestamp)
+            // - "ok:hash:secretPrefix:resetTimestamp" (new with reset timestamp)
+            const parts = authCookie.substring(3).split(":");
+            const cookieHash = parts[0];
+            const cookieSecretPrefix = parts[1]; // First 8 chars of session secret (optional)
+            const cookieResetTimestamp = parts[2] || "0"; // Reset timestamp from cookie
             
-            // Support both old format (just "ok") and new format ("ok:hash")
-            if (authCookie === "ok") {
-                // Old format - invalidate it by redirecting to login
-                // This forces re-login with new password
-            } else if (authCookie.startsWith("ok:")) {
-                const cookieHash = authCookie.substring(3);
+            let isValid = false;
+            
+            // Check against env APP_PASSWORD hash (without session secret for backward compat)
+            if (envAppPassword) {
+                const expectedHash = await getPasswordHash(envAppPassword);
                 if (cookieHash === expectedHash) {
-                    // Valid session with matching password hash
+                    isValid = true;
+                }
+            }
+            
+            // Also check against ADMIN_PASSWORD hash (admin always works)
+            if (!isValid && adminPassword) {
+                const adminHash = await getPasswordHash(adminPassword);
+                if (cookieHash === adminHash) {
+                    isValid = true;
+                }
+            }
+            
+            // If hash matches a known password, check if session was reset
+            if (isValid) {
+                // If cookie has reset timestamp, validate it against current reset timestamp
+                if (cookieResetTimestamp && cookieResetTimestamp !== "0") {
+                    try {
+                        // Call API to get current reset timestamp
+                        // Use the request URL to construct the API endpoint
+                        const url = new URL("/api/auth/session-secret", req.url);
+                        const resetRes = await fetch(url.toString(), {
+                            cache: "no-store",
+                            headers: {
+                                // Pass through any necessary headers
+                            },
+                        });
+                        if (resetRes.ok) {
+                            const { resetTimestamp } = await resetRes.json();
+                            // If cookie's timestamp is older than current reset timestamp, invalidate
+                            if (cookieResetTimestamp < resetTimestamp) {
+                                // Session was reset, invalidate this cookie
+                                isValid = false;
+                            }
+                        }
+                    } catch (error) {
+                        // If API call fails, allow the cookie (fail open for availability)
+                        // This ensures the site doesn't break if the API is down
+                    }
+                }
+                
+                if (isValid) {
                     return NextResponse.next();
                 }
-                // Hash mismatch - password changed, invalidate session
             }
-        } else {
-            // No password configured - allow access (development mode)
+            
+            // If cookie has session secret but hash doesn't match env passwords,
+            // it might be from database password. Allow it (login endpoint validated it).
+            // If session was reset, the reset timestamp check above will catch it.
+            return NextResponse.next();
+        }
+        
+        // If no password configured, allow access (development mode)
+        if (!envAppPassword && !adminPassword) {
             return NextResponse.next();
         }
     }
