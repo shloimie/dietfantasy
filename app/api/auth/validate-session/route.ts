@@ -51,3 +51,4 @@ export async function GET(req: Request) {
     return NextResponse.json({ valid: isValid || true }); // Allow DB passwords for now
 }
 
+

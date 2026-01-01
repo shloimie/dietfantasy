@@ -111,21 +111,45 @@ export async function POST(req: NextRequest) {
             select: { id: true, userId: true },
         });
         
-        // Batch updates by grouping stops with the same user data
-        const updatesByUser = new Map<number, { userId: number; stopIds: number[]; user: typeof allUsersForSync[0] }>();
+        // First, deduplicate: if a user has multiple stops for the same day, keep only one
+        const stopsByUser = new Map<number, number[]>();
         for (const stop of stopsToSync) {
             if (!stop.userId) continue;
+            if (!stopsByUser.has(stop.userId)) {
+                stopsByUser.set(stop.userId, []);
+            }
+            stopsByUser.get(stop.userId)!.push(stop.id);
+        }
+        
+        // For users with multiple stops, delete all but the first one
+        const duplicateStopIds: number[] = [];
+        for (const [userId, stopIds] of stopsByUser.entries()) {
+            if (stopIds.length > 1) {
+                // Keep the first stop, delete the rest
+                duplicateStopIds.push(...stopIds.slice(1));
+            }
+        }
+        if (duplicateStopIds.length > 0) {
+            await prisma.stop.deleteMany({
+                where: { id: { in: duplicateStopIds } },
+            });
+        }
+        
+        // Now update remaining stops (one per user)
+        const updatesByUser = new Map<number, { userId: number; stopId: number; user: typeof allUsersForSync[0] }>();
+        for (const stop of stopsToSync) {
+            if (!stop.userId || duplicateStopIds.includes(stop.id)) continue;
             const user = userById.get(stop.userId);
             if (!user) continue;
             
+            // Only keep one stop per user
             if (!updatesByUser.has(stop.userId)) {
-                updatesByUser.set(stop.userId, { userId: stop.userId, stopIds: [], user });
+                updatesByUser.set(stop.userId, { userId: stop.userId, stopId: stop.id, user });
             }
-            updatesByUser.get(stop.userId)!.stopIds.push(stop.id);
         }
         
         let stopsSynced = 0;
-        for (const { user, stopIds } of updatesByUser.values()) {
+        for (const { user, stopId } of updatesByUser.values()) {
             const name = `${(user.first || "").trim()} ${(user.last || "").trim()}`.trim() || "(Unnamed)";
             const updateData: any = {
                 name,
@@ -140,11 +164,17 @@ export async function POST(req: NextRequest) {
                 lng: user.lng ?? null,
             };
             
-            const result = await prisma.stop.updateMany({
-                where: { id: { in: stopIds } },
-                data: updateData,
-            });
-            stopsSynced += result.count;
+            try {
+                await prisma.stop.update({
+                    where: { id: stopId },
+                    data: updateData,
+                });
+                stopsSynced++;
+            } catch (e: any) {
+                // If update fails due to unique constraint, the stop already exists with this data
+                // This can happen if there's a race condition or duplicate
+                console.warn(`[cleanup] Failed to update stop ${stopId} for user ${user.id}:`, e?.message);
+            }
         }
 
         // Ensure all active users (not paused, delivery=true) have a stop for this day

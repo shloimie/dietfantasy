@@ -153,8 +153,152 @@ export async function GET(req: Request) {
             if (!claimed.has(k)) unrouted.push(v);
         }
 
+        // 8) Check users without stops, create missing stops, and log reasons
+        const allUsers = await prisma.user.findMany({
+            select: {
+                id: true,
+                first: true,
+                last: true,
+                address: true,
+                apt: true,
+                city: true,
+                state: true,
+                zip: true,
+                phone: true,
+                lat: true,
+                lng: true,
+                paused: true,
+                delivery: true,
+                schedule: {
+                    select: {
+                        monday: true, tuesday: true, wednesday: true, thursday: true,
+                        friday: true, saturday: true, sunday: true,
+                    }
+                }
+            },
+            orderBy: { id: "asc" },
+        });
+
+        // Check which users have stops for THIS day
+        const dayWhere = day === "all" ? {} : { day };
+        const stopsForDay = await prisma.stop.findMany({
+            where: dayWhere,
+            select: { userId: true },
+        });
+        const usersWithStops = new Set<number>();
+        for (const s of stopsForDay) {
+            if (typeof s.userId === "number") {
+                usersWithStops.add(s.userId);
+            }
+        }
+
+        const isDeliverable = (u: any) => {
+            const v = (u?.delivery ?? u?.Delivery);
+            return v === undefined || v === null ? true : Boolean(v);
+        };
+
+        const isOnDay = (u: any, dayValue: string) => {
+            if (dayValue === "all") return true;
+            const sc = u?.schedule;
+            if (!sc) return true; // back-compat
+            return !!sc[dayValue as keyof typeof sc];
+        };
+
+        const s = (v: unknown) => (v == null ? "" : String(v));
+        const n = (v: unknown) => (typeof v === "number" ? v : null);
+
+        // Build list of users without stops and their reasons
+        // Also create stops for users who should have them
+        const usersWithoutStops: Array<{ id: number; name: string; reason: string }> = [];
+        const stopsToCreate: Array<{
+            day: string;
+            userId: number;
+            name: string;
+            address: string;
+            apt: string | null;
+            city: string;
+            state: string;
+            zip: string;
+            phone: string | null;
+            lat: number | null;
+            lng: number | null;
+        }> = [];
+
+        for (const user of allUsers) {
+            if (!usersWithStops.has(user.id)) {
+                const reasons: string[] = [];
+                
+                if (user.paused) {
+                    reasons.push("paused");
+                }
+                if (!isDeliverable(user)) {
+                    reasons.push("delivery off");
+                }
+                if (!isOnDay(user, day)) {
+                    reasons.push(`not on schedule (${day})`);
+                }
+                
+                const name = `${user.first || ""} ${user.last || ""}`.trim() || "Unnamed";
+                
+                // If user should have a stop (no valid reasons), create it
+                if (reasons.length === 0) {
+                    stopsToCreate.push({
+                        day: day,
+                        userId: user.id,
+                        name: name || "(Unnamed)",
+                        address: s(user.address),
+                        apt: user.apt ? s(user.apt) : null,
+                        city: s(user.city),
+                        state: s(user.state),
+                        zip: s(user.zip),
+                        phone: user.phone ? s(user.phone) : null,
+                        lat: n(user.lat),
+                        lng: n(user.lng),
+                    });
+                } else {
+                    // User has a valid reason for not having a stop, log it
+                    const reason = reasons.join(", ");
+                    usersWithoutStops.push({ id: user.id, name, reason });
+                }
+            }
+        }
+
+        // Create missing stops for users who should have them
+        if (stopsToCreate.length > 0) {
+            // Add users who are getting stops created to the response for logging
+            for (const stopData of stopsToCreate) {
+                const userName = stopData.name;
+                usersWithoutStops.push({ 
+                    id: stopData.userId, 
+                    name: userName, 
+                    reason: "creating stop now" 
+                });
+            }
+            
+            try {
+                await prisma.stop.createMany({ 
+                    data: stopsToCreate, 
+                    skipDuplicates: true 
+                });
+            } catch (e: any) {
+                // If createMany fails due to unique constraint, try creating one at a time
+                // This handles cases where stops might already exist
+                console.warn(`[route/routes] createMany failed, creating stops individually:`, e?.message);
+                for (const stopData of stopsToCreate) {
+                    try {
+                        await prisma.stop.create({ data: stopData });
+                    } catch (createError: any) {
+                        // Skip if stop already exists (unique constraint)
+                        if (createError?.code !== 'P2002') {
+                            console.error(`[route/routes] Failed to create stop for user ${stopData.userId}:`, createError?.message);
+                        }
+                    }
+                }
+            }
+        }
+
         return NextResponse.json(
-            { routes, unrouted },
+            { routes, unrouted, usersWithoutStops },
             { headers: { "Cache-Control": "no-store" } }
         );
     } catch (e: any) {

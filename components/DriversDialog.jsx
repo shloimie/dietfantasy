@@ -219,6 +219,19 @@ export default function DriversDialog({
             const data = await res.json();
             setRoutes(data.routes || []);
             setUnrouted(data.unrouted || []);
+
+            // Log users without stops to browser console
+            if (data.usersWithoutStops && Array.isArray(data.usersWithoutStops)) {
+                console.log(`\n[DriversDialog] Checking users without stops for day: ${selectedDay}`);
+                if (data.usersWithoutStops.length === 0) {
+                    console.log(`  ✅ All users have stops for day: ${selectedDay}`);
+                } else {
+                    data.usersWithoutStops.forEach((user) => {
+                        console.log(`  ❌ User #${user.id} (${user.name}): ${user.reason}`);
+                    });
+                    console.log(`  📊 Total users without stops: ${data.usersWithoutStops.length}`);
+                }
+            }
         } catch (e) {
             console.error("Failed to load routes", e);
         } finally {
@@ -253,6 +266,19 @@ export default function DriversDialog({
                 const data1 = await res1.json();
                 setRoutes(data1.routes || []);
                 setUnrouted(data1.unrouted || []);
+
+                // Log users without stops to browser console
+                if (data1.usersWithoutStops && Array.isArray(data1.usersWithoutStops)) {
+                    console.log(`\n[DriversDialog] Checking users without stops for day: ${selectedDay}`);
+                    if (data1.usersWithoutStops.length === 0) {
+                        console.log(`  ✅ All users have stops for day: ${selectedDay}`);
+                    } else {
+                        data1.usersWithoutStops.forEach((user) => {
+                            console.log(`  ❌ User #${user.id} (${user.name}): ${user.reason}`);
+                        });
+                        console.log(`  📊 Total users without stops: ${data1.usersWithoutStops.length}`);
+                    }
+                }
 
                 const res2 = await fetch(`/api/route/runs?day=${selectedDay}`, { cache: "no-store" });
                 const data2 = await res2.json();

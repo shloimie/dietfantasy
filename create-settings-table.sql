@@ -12,3 +12,4 @@ CREATE TABLE "public"."Settings" (
 -- CreateIndex
 CREATE UNIQUE INDEX "Settings_key_key" ON "public"."Settings"("key");
 
+

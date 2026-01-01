@@ -33,3 +33,4 @@ const isValidPassword =
 
 Since `getAppPassword()` prioritizes the database over env vars, the old env password is completely ignored once a database password exists.
 
+
