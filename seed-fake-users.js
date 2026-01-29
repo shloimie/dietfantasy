@@ -1,7 +1,7 @@
 // seed-fake-users.js
 // Script to seed the database with 50 fake users
 
-require('dotenv').config({ path: '.env.local' });
+require('dotenv').config({ path: '..env' });
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 

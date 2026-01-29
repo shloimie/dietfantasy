@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 
-// ---- Bias & config (override in .env.local) ----
+// ---- Bias & config (override in ..env) ----
 const COUNTRY  = (process.env.GEOCODE_COUNTRY || "US").toLowerCase();
 const TIMEOUT  = Number(process.env.GEOCODE_TIMEOUT_MS || 7000);
 
