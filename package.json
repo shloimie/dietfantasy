@@ -11,7 +11,8 @@
     "prisma:migrate": "dotenv -e .env.local -- prisma migrate dev",
     "prisma:studio": "dotenv -e .env.local -- prisma studio",
     "prisma:generate": "dotenv -e .env.local -- prisma generate",
-    "seed": "node seed-fake-users.js"
+    "seed": "node seed-fake-users.js",
+    "import-backup": "node scripts/import-backup.js"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

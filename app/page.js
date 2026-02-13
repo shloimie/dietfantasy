@@ -322,6 +322,58 @@ export default function UsersPage() {
         }
     }, [visibleRows]);
 
+    // Export ALL clients to Excel (fetches full list from API)
+    const doExportExcelAll = React.useCallback(async () => {
+        try {
+            const res = await fetch("/api/users", { cache: "no-store" });
+            if (!res.ok) throw new Error("Failed to fetch users");
+            const allUsers = await res.json();
+            const mod = await import("../utils/excelExport");
+            const fn = mod.default || mod.exportExcel || mod.exportUsersToExcel || mod.exportToExcel;
+            if (typeof fn === "function") await fn(allUsers, tsString);
+        } catch (e) {
+            console.error("Export all Excel failed:", e);
+        }
+    }, []);
+
+    // Export full backup (JSON): users, signatures, routes, drivers, stops, routeRuns
+    const doExportBackupJson = React.useCallback(async () => {
+        try {
+            const res = await fetch("/api/export/backup", { cache: "no-store" });
+            if (!res.ok) throw new Error("Failed to fetch backup");
+            const text = await res.text();
+            const parsed = JSON.parse(text);
+            // Ensure we have all sections (API always returns them; defensive check)
+            const full = {
+                exportedAt: parsed.exportedAt ?? new Date().toISOString(),
+                users: Array.isArray(parsed.users) ? parsed.users : [],
+                signatures: Array.isArray(parsed.signatures) ? parsed.signatures : [],
+                routes: Array.isArray(parsed.routes) ? parsed.routes : [],
+                drivers: Array.isArray(parsed.drivers) ? parsed.drivers : [],
+                stops: Array.isArray(parsed.stops) ? parsed.stops : [],
+                routeRuns: Array.isArray(parsed.routeRuns) ? parsed.routeRuns : [],
+            };
+            const filename =
+                res.headers.get("Content-Disposition")?.match(/filename="?([^";\n]+)"?/)?.[1] ||
+                `backup-${tsString().replace(/\s+/g, "-")}.json`;
+            const blob = new Blob([JSON.stringify(full, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error("Export backup JSON failed:", e);
+        }
+    }, []);
+
+    // Open backup API in new tab so user can Save As and get exactly what the server returns
+    const doOpenBackupUrl = React.useCallback(() => {
+        const url = typeof window !== "undefined" ? `${window.location.origin}/api/export/backup` : "/api/export/backup";
+        window.open(url, "_blank", "noopener,noreferrer");
+    }, []);
+
     const doExportClientsPdf = React.useCallback(async () => {
         try {
             const mod = await import("../utils/pdfClientList");
@@ -455,6 +507,9 @@ export default function UsersPage() {
                             setUserModalOpen(true);
                         }}
                         onExportExcel={doExportExcel}
+                        onExportExcelAll={doExportExcelAll}
+                        onExportBackupJson={doExportBackupJson}
+                        onOpenBackupUrl={doOpenBackupUrl}
                         onExportClientPdf={doExportClientsPdf}
                         onExportLabels={doExportLabels}
                         onOpenCityColors={() => setCityColorsOpen(true)}

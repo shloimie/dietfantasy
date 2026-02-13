@@ -31,6 +31,9 @@ export default function ActionBar({
                                       // actions
                                       onAddUser = () => {},
                                       onExportExcel = () => {},
+                                      onExportExcelAll = () => {},
+                                      onExportBackupJson = () => {},
+                                      onOpenBackupUrl = () => {},
                                       onExportClientPdf = () => {},
                                       onExportLabels = () => {},
                                       onOpenCityColors = () => {},
@@ -185,7 +188,55 @@ export default function ActionBar({
                                 },
                             }}
                         >
-                            Export Excel
+                            Export Excel (visible)
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            onClick={onExportExcelAll}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#22c55e",
+                                color: "#166534",
+                                "&:hover": {
+                                    borderColor: "#16a34a",
+                                    backgroundColor: "rgba(34,197,94,0.08)",
+                                },
+                            }}
+                        >
+                            Export all (Excel)
+                        </Button>
+
+                        <Button
+                            variant="outlined"
+                            onClick={onExportBackupJson}
+                            disabled={disabled}
+                            sx={{
+                                borderColor: "#0ea5e9",
+                                color: "#0369a1",
+                                "&:hover": {
+                                    borderColor: "#0284c7",
+                                    backgroundColor: "rgba(14,165,233,0.08)",
+                                },
+                            }}
+                        >
+                            Full backup (JSON)
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={onOpenBackupUrl}
+                            disabled={disabled}
+                            title="Open backup URL in new tab; use Save As to download the full JSON (users, signatures, routes, drivers, stops, routeRuns)"
+                            sx={{
+                                borderColor: "#0ea5e9",
+                                color: "#0369a1",
+                                "&:hover": {
+                                    borderColor: "#0284c7",
+                                    backgroundColor: "rgba(14,165,233,0.08)",
+                                },
+                            }}
+                        >
+                            Backup (open URL)
                         </Button>
 
                         <Button

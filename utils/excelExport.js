@@ -49,6 +49,11 @@ export function exportExcel(users = [], ts) {
         "MEDICAID",
         "PAUSED",
         "COMPLEX",
+        "CLIENT_ID",      // Unite Us client id
+        "CASE_ID",        // Unite Us case id
+        "BILL",           // bill flag
+        "DELIVERY",       // delivery flag
+        "BILLINGS_JSON",  // billing history (lossless backup)
         "LAT",           // normalized lat (prefers u.lat, falls back to u.latitude)
         "LNG",           // normalized lng (prefers u.lng, falls back to u.longitude)
         "LATITUDE",      // raw DB latitude
@@ -88,6 +93,9 @@ export function exportExcel(users = [], ts) {
         const visitsJson = (() => {
             try { return JSON.stringify(u?.visits ?? [], null, 0); } catch { return ""; }
         })();
+        const billingsJson = (() => {
+            try { return JSON.stringify(u?.billings ?? [], null, 0); } catch { return ""; }
+        })();
 
         // ISO dates
         const iso = (d) => {
@@ -113,6 +121,11 @@ export function exportExcel(users = [], ts) {
             MEDICAID: u?.medicaid ? "Yes" : "No",
             PAUSED: u?.paused ? "Yes" : "No",
             COMPLEX: u?.complex ? "Yes" : "No",
+            CLIENT_ID: u?.clientId ?? "",
+            CASE_ID: u?.caseId ?? "",
+            BILL: u?.bill !== false ? "Yes" : "No",
+            DELIVERY: u?.delivery !== false ? "Yes" : "No",
+            BILLINGS_JSON: billingsJson,
             LAT: lat ?? "",
             LNG: lng ?? "",
             LATITUDE: u?.latitude ?? "",
@@ -158,6 +171,11 @@ export function exportExcel(users = [], ts) {
         { wch: 10 },  // MEDICAID
         { wch: 8 },   // PAUSED
         { wch: 8 },   // COMPLEX
+        { wch: 18 },  // CLIENT_ID
+        { wch: 18 },  // CASE_ID
+        { wch: 6 },   // BILL
+        { wch: 10 },  // DELIVERY
+        { wch: 30 },  // BILLINGS_JSON
         { wch: 12 },  // LAT
         { wch: 12 },  // LNG
         { wch: 12 },  // LATITUDE
